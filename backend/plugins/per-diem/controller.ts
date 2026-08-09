@@ -1,0 +1,19 @@
+import type { FastifyRequest, FastifyReply } from "fastify";
+import { perDiemService } from "./service";
+
+export const perDiemController = {
+  list: async (req: FastifyRequest, reply: FastifyReply) => {
+    const { employeeId } = req.params as { employeeId: string };
+    reply.send(await perDiemService.list(Number(employeeId)));
+  },
+
+  evaluate: async (req: FastifyRequest, reply: FastifyReply) => {
+    const { employeeId, date, miles, stayedOvernight } = req.body as {
+      employeeId: number;
+      date: string;
+      miles: number;
+      stayedOvernight?: boolean;
+    };
+    reply.send(await perDiemService.evaluate(employeeId, date, miles, stayedOvernight ?? false));
+  },
+};

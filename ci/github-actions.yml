@@ -1,0 +1,19 @@
+name: QuickTime Deployment
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Build and deploy
+        run: |
+          docker-compose down
+          docker-compose build
+          docker-compose up -d

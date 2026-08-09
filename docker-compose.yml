@@ -1,0 +1,42 @@
+version: "3.9"
+
+# Plesk (already installed on the VPS) owns ports 80/443, its own nginx, and
+# SSL for the domain — so these containers only bind to 127.0.0.1, reachable
+# from Plesk's nginx on the same host but never directly from the internet.
+# Plesk is configured separately (see DEPLOY.md) to reverse-proxy the domain
+# into these ports.
+services:
+  backend:
+    build: ./backend
+    container_name: quicktime-backend
+    restart: always
+    env_file: .env
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - quicktime-uploads:/app/uploads
+    depends_on:
+      - db
+
+  frontend:
+    build: ./frontend
+    container_name: quicktime-frontend
+    restart: always
+    ports:
+      - "127.0.0.1:5173:80"
+
+  db:
+    image: postgres:15
+    container_name: quicktime-db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      # Must match the password embedded in DATABASE_URL below — see .env.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: quicktime
+    volumes:
+      - quicktime-data:/var/lib/postgresql/data
+
+volumes:
+  quicktime-data:
+  quicktime-uploads:
