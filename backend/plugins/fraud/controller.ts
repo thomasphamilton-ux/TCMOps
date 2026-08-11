@@ -19,8 +19,12 @@ export const fraudController = {
 
   resolve: async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
-    const { reason, notes } = req.body as { reason: FraudResolutionReason; notes?: string };
-    reply.send(await fraudService.resolve(Number(id), req.authUser!.id, reason, notes));
+    const { reason, notes, denyHours } = req.body as {
+      reason: FraudResolutionReason;
+      notes?: string;
+      denyHours?: boolean;
+    };
+    reply.send(await fraudService.resolve(Number(id), req.authUser!.id, reason, notes, denyHours));
   },
 
   investigate: async (req: FastifyRequest, reply: FastifyReply) => {

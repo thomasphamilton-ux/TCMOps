@@ -15,11 +15,17 @@ import {
   Chip,
   Checkbox,
   FormControlLabel,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Stack,
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import api from "../../api/client";
 import ExcelImport from "../../components/ExcelImport";
 import { useAuth } from "../../context/AuthContext";
+import { LANGUAGE_OPTIONS } from "../../constants/languages";
 
 interface User {
   id: number;
@@ -29,12 +35,16 @@ interface User {
   teamId: number | null;
   active: boolean;
   shiftExempt: boolean;
+  classification: string | null;
+  perDiemRate: number | null;
+  language: string | null;
 }
 
 interface Team {
   id: number;
   name: string;
   projectId: number | null;
+  active: boolean;
 }
 
 interface Project {
@@ -61,6 +71,8 @@ export default function UsersPage() {
     teamId: "",
     projectId: "",
     shiftExempt: false,
+    classification: "",
+    perDiemRate: "",
   });
   const [submitting, setSubmitting] = useState(false);
 
@@ -85,7 +97,9 @@ export default function UsersPage() {
   // Manager's own project is forced server-side, so the field only matters — and
   // only needs to render — for admin. Once a project is picked, the team choices
   // narrow to that project.
-  const visibleTeams = isAdmin && form.projectId ? teams.filter((t) => t.projectId === Number(form.projectId)) : teams;
+  const visibleTeams = (
+    isAdmin && form.projectId ? teams.filter((t) => t.projectId === Number(form.projectId)) : teams
+  ).filter((t) => t.active || t.id === Number(form.teamId));
 
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault();
@@ -96,8 +110,19 @@ export default function UsersPage() {
         ...form,
         teamId: form.teamId ? Number(form.teamId) : undefined,
         projectId: isAdmin && form.projectId ? Number(form.projectId) : undefined,
+        perDiemRate: form.perDiemRate ? Number(form.perDiemRate) : undefined,
       });
-      setForm({ name: "", phone: "", pin: "", role: "employee", teamId: "", projectId: "", shiftExempt: false });
+      setForm({
+        name: "",
+        phone: "",
+        pin: "",
+        role: "employee",
+        teamId: "",
+        projectId: "",
+        shiftExempt: false,
+        classification: "",
+        perDiemRate: "",
+      });
       await load();
     } catch (err: any) {
       setError(err.response?.data?.error || "Could not create user.");
@@ -112,6 +137,81 @@ export default function UsersPage() {
       setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, shiftExempt: !u.shiftExempt } : x)));
     } catch {
       setError("Could not update shift exemption.");
+    }
+  };
+
+  const toggleActive = async (u: User) => {
+    setError("");
+    try {
+      await api.patch(`/users/${u.id}`, { active: !u.active });
+      setUsers((prev) => prev.map((x) => (x.id === u.id ? { ...x, active: !u.active } : x)));
+    } catch (err: any) {
+      setError(err.response?.data?.error || "Could not update user.");
+    }
+  };
+
+  const [editing, setEditing] = useState<User | null>(null);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    phone: "",
+    role: "employee",
+    teamId: "",
+    projectId: "",
+    shiftExempt: false,
+    pin: "",
+    classification: "",
+    perDiemRate: "",
+    language: "",
+  });
+  const [editError, setEditError] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+
+  const openEdit = (u: User) => {
+    setEditing(u);
+    setEditForm({
+      name: u.name,
+      phone: u.phone,
+      role: u.role,
+      teamId: u.teamId ? String(u.teamId) : "",
+      projectId: "",
+      shiftExempt: u.shiftExempt,
+      pin: "",
+      classification: u.classification ?? "",
+      perDiemRate: u.perDiemRate != null ? String(u.perDiemRate) : "",
+      language: u.language ?? "",
+    });
+    setEditError("");
+  };
+
+  const closeEdit = () => setEditing(null);
+
+  const editVisibleTeams = (
+    isAdmin && editForm.projectId ? teams.filter((t) => t.projectId === Number(editForm.projectId)) : teams
+  ).filter((t) => t.active || t.id === Number(editForm.teamId));
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    setEditSaving(true);
+    setEditError("");
+    try {
+      await api.patch(`/users/${editing.id}`, {
+        name: editForm.name,
+        phone: editForm.phone,
+        role: editForm.role,
+        teamId: editForm.teamId ? Number(editForm.teamId) : null,
+        ...(isAdmin && editForm.projectId ? { projectId: Number(editForm.projectId) } : {}),
+        shiftExempt: editForm.shiftExempt,
+        classification: editForm.classification || null,
+        perDiemRate: editForm.perDiemRate ? Number(editForm.perDiemRate) : null,
+        language: editForm.language || null,
+        ...(editForm.pin ? { pin: editForm.pin } : {}),
+      });
+      setEditing(null);
+      await load();
+    } catch (err: any) {
+      setEditError(err.response?.data?.error || "Could not save changes.");
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -140,6 +240,21 @@ export default function UsersPage() {
             required
           />
           <TextField label="PIN" value={form.pin} onChange={(e) => setForm({ ...form, pin: e.target.value })} required />
+          <TextField
+            label="Classification"
+            placeholder="Helper, Apprentice, Journeyman..."
+            value={form.classification}
+            onChange={(e) => setForm({ ...form, classification: e.target.value })}
+            sx={{ minWidth: 180 }}
+          />
+          <TextField
+            label="Per Diem Rate ($/day)"
+            type="number"
+            value={form.perDiemRate}
+            onChange={(e) => setForm({ ...form, perDiemRate: e.target.value })}
+            sx={{ width: 170 }}
+            inputProps={{ step: "0.01", min: 0 }}
+          />
           <TextField
             select
             label="Role"
@@ -217,9 +332,11 @@ export default function UsersPage() {
               <TableCell>Name</TableCell>
               <TableCell>Phone</TableCell>
               <TableCell>Role</TableCell>
+              <TableCell>Classification</TableCell>
               <TableCell>Team</TableCell>
               <TableCell>Status</TableCell>
               <TableCell>Shift Exempt</TableCell>
+              <TableCell />
             </TableRow>
           </TableHead>
           <TableBody>
@@ -233,9 +350,19 @@ export default function UsersPage() {
                 <TableCell>{u.name}</TableCell>
                 <TableCell>{u.phone}</TableCell>
                 <TableCell>{u.role}</TableCell>
+                <TableCell>{u.classification ?? "—"}</TableCell>
                 <TableCell>{teams.find((t) => t.id === u.teamId)?.name ?? "—"}</TableCell>
                 <TableCell>
-                  <Chip size="small" label={u.active ? "Active" : "Inactive"} color={u.active ? "success" : "default"} />
+                  <Chip
+                    size="small"
+                    label={u.active ? "Active" : "Inactive"}
+                    color={u.active ? "success" : "default"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleActive(u);
+                    }}
+                    sx={{ cursor: "pointer" }}
+                  />
                 </TableCell>
                 <TableCell>
                   {u.role === "employee" ? (
@@ -251,11 +378,138 @@ export default function UsersPage() {
                     </Typography>
                   )}
                 </TableCell>
+                <TableCell>
+                  <Button
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openEdit(u);
+                    }}
+                  >
+                    Edit
+                  </Button>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </Paper>
+
+      <Dialog open={editing !== null} onClose={closeEdit} maxWidth="xs" fullWidth>
+        <DialogTitle>Edit User — {editing?.name}</DialogTitle>
+        <DialogContent>
+          {editError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {editError}
+            </Alert>
+          )}
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField
+              label="Name"
+              value={editForm.name}
+              onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+              required
+            />
+            <TextField
+              label="Phone"
+              value={editForm.phone}
+              onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+              required
+            />
+            <TextField
+              label="Classification"
+              placeholder="Helper, Apprentice, Journeyman..."
+              value={editForm.classification}
+              onChange={(e) => setEditForm({ ...editForm, classification: e.target.value })}
+            />
+            <TextField
+              label="Per Diem Rate ($/day)"
+              type="number"
+              value={editForm.perDiemRate}
+              onChange={(e) => setEditForm({ ...editForm, perDiemRate: e.target.value })}
+              inputProps={{ step: "0.01", min: 0 }}
+              helperText="Leave blank if this person isn't eligible for per diem"
+            />
+            <TextField
+              select
+              label="Language"
+              value={editForm.language}
+              onChange={(e) => setEditForm({ ...editForm, language: e.target.value })}
+            >
+              <MenuItem value="">Not set</MenuItem>
+              {LANGUAGE_OPTIONS.map((l) => (
+                <MenuItem key={l.value} value={l.value}>
+                  {l.label}
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              select
+              label="Role"
+              value={editForm.role}
+              onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
+            >
+              {ROLES.map((r) => (
+                <MenuItem key={r} value={r}>
+                  {r}
+                </MenuItem>
+              ))}
+            </TextField>
+            {isAdmin && (
+              <TextField
+                select
+                label="Project"
+                value={editForm.projectId}
+                onChange={(e) => setEditForm({ ...editForm, projectId: e.target.value, teamId: "" })}
+                helperText="Leave blank to keep the user's current project"
+              >
+                <MenuItem value="">Unchanged</MenuItem>
+                {projects.map((p) => (
+                  <MenuItem key={p.id} value={p.id}>
+                    {p.name}
+                  </MenuItem>
+                ))}
+              </TextField>
+            )}
+            <TextField
+              select
+              label="Team"
+              value={editForm.teamId}
+              onChange={(e) => setEditForm({ ...editForm, teamId: e.target.value })}
+            >
+              <MenuItem value="">Unassigned</MenuItem>
+              {editVisibleTeams.map((t) => (
+                <MenuItem key={t.id} value={t.id}>
+                  {t.name}
+                </MenuItem>
+              ))}
+            </TextField>
+            {editForm.role === "employee" && (
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={editForm.shiftExempt}
+                    onChange={(e) => setEditForm({ ...editForm, shiftExempt: e.target.checked })}
+                  />
+                }
+                label="Shift exempt"
+              />
+            )}
+            <TextField
+              label="Reset PIN (optional)"
+              value={editForm.pin}
+              onChange={(e) => setEditForm({ ...editForm, pin: e.target.value })}
+              helperText="Leave blank to keep the current PIN"
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeEdit}>Cancel</Button>
+          <Button variant="contained" onClick={saveEdit} disabled={editSaving}>
+            {editSaving ? "Saving..." : "Save"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

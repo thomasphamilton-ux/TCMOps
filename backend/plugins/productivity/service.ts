@@ -2,9 +2,10 @@ import { db } from "../../db";
 
 export const productivityService = {
   async getTotals(employeeId: number, start: string, end: string) {
+    // Denied days are excluded — see reports/service.ts for the same rule.
     const rows = await db.query.dailyTime.findMany({
       where: (dt, { and, eq, gte, lte }) =>
-        and(eq(dt.employeeId, employeeId), gte(dt.date, start), lte(dt.date, end)),
+        and(eq(dt.employeeId, employeeId), gte(dt.date, start), lte(dt.date, end), eq(dt.denied, false)),
       with: { entries: { with: { costCode: true } } },
     });
 

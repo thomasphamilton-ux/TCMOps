@@ -1,16 +1,28 @@
 import { useState, useEffect } from "react";
-import { Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, Button, Alert } from "@mui/material";
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
+  MenuItem,
+  Button,
+  Alert,
+  FormControlLabel,
+  Checkbox,
+} from "@mui/material";
 import { FRAUD_RESOLUTION_REASONS } from "../constants/fraudResolutionReasons";
 
 interface ResolveFlagDialogProps {
   open: boolean;
   onClose: () => void;
-  onSubmit: (reason: string, notes: string) => Promise<void>;
+  onSubmit: (reason: string, notes: string, denyHours: boolean) => Promise<void>;
 }
 
 export default function ResolveFlagDialog({ open, onClose, onSubmit }: ResolveFlagDialogProps) {
   const [reason, setReason] = useState("");
   const [notes, setNotes] = useState("");
+  const [denyHours, setDenyHours] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -18,6 +30,7 @@ export default function ResolveFlagDialog({ open, onClose, onSubmit }: ResolveFl
     if (open) {
       setReason("");
       setNotes("");
+      setDenyHours(false);
       setError("");
     }
   }, [open]);
@@ -27,7 +40,7 @@ export default function ResolveFlagDialog({ open, onClose, onSubmit }: ResolveFl
     setSubmitting(true);
     setError("");
     try {
-      await onSubmit(reason, notes);
+      await onSubmit(reason, notes, denyHours);
     } catch (err: any) {
       setError(err.response?.data?.error || "Could not resolve flag.");
     } finally {
@@ -66,6 +79,12 @@ export default function ResolveFlagDialog({ open, onClose, onSubmit }: ResolveFl
           fullWidth
           multiline
           minRows={2}
+          sx={{ mb: 1 }}
+        />
+        <FormControlLabel
+          control={<Checkbox checked={denyHours} onChange={(e) => setDenyHours(e.target.checked)} />}
+          label="Deny hours for this day"
+          title="Keeps the cost-coded entries for audit but excludes them from report/dashboard totals"
         />
       </DialogContent>
       <DialogActions>

@@ -37,6 +37,9 @@ interface UserDetail {
   role: string;
   teamId: number | null;
   active: boolean;
+  facialEnrolled: boolean;
+  classification: string | null;
+  perDiemRate: number | null;
 }
 
 interface Team {
@@ -80,6 +83,8 @@ interface DailyRecord {
   clockIn: string | null;
   clockOut: string | null;
   workedMinutes: number | null;
+  denied: boolean;
+  deniedReason: string | null;
   entries: DailyEntry[];
   clockEvents: ClockEvent[];
 }
@@ -328,9 +333,9 @@ export default function EmployeeDetailPage() {
 
   const [resolvingFlagId, setResolvingFlagId] = useState<number | null>(null);
 
-  const submitResolve = async (reason: string, notes: string) => {
+  const submitResolve = async (reason: string, notes: string, denyHours: boolean) => {
     if (resolvingFlagId === null) return;
-    await api.patch(`/fraud/${resolvingFlagId}/resolve`, { reason, notes: notes || undefined });
+    await api.patch(`/fraud/${resolvingFlagId}/resolve`, { reason, notes: notes || undefined, denyHours });
     setResolvingFlagId(null);
     await load();
   };
@@ -390,6 +395,12 @@ export default function EmployeeDetailPage() {
     await load();
   };
 
+  const resetFacialTemplate = async () => {
+    if (!employee) return;
+    await api.delete(`/users/${employee.id}/facial-template`);
+    await load();
+  };
+
   if (error) return <Alert severity="error">{error}</Alert>;
   if (!employee) return <Typography>Loading...</Typography>;
 
@@ -408,7 +419,18 @@ export default function EmployeeDetailPage() {
         <Chip label={employee.phone} />
         <Chip label={employee.role} color="primary" variant="outlined" />
         <Chip label={team ? team.name : "No team"} variant="outlined" />
+        {employee.classification && <Chip label={employee.classification} variant="outlined" />}
+        {employee.perDiemRate != null && (
+          <Chip label={`Per Diem: $${employee.perDiemRate.toFixed(2)}/day`} variant="outlined" />
+        )}
         <Chip label={employee.active ? "Active" : "Inactive"} color={employee.active ? "success" : "default"} />
+        <Chip
+          label={employee.facialEnrolled ? "Facial ID: Enrolled" : "Facial ID: Not enrolled"}
+          color={employee.facialEnrolled ? "success" : "default"}
+          variant="outlined"
+          onDelete={canEdit && employee.facialEnrolled ? resetFacialTemplate : undefined}
+          deleteIcon={canEdit && employee.facialEnrolled ? <span title="Reset — re-enrolls on next clock-in">↺</span> : undefined}
+        />
       </Stack>
 
       <Paper sx={{ p: 2, mb: 3, display: "flex", gap: 2, flexWrap: "wrap", alignItems: "center" }}>
@@ -613,7 +635,19 @@ export default function EmployeeDetailPage() {
                   const lunchException = lunchExceptions.find((l) => l.date === d.date);
                   return (
                     <TableRow key={d.id}>
-                      <TableCell>{d.date}</TableCell>
+                      <TableCell>
+                        {d.date}
+                        {d.denied && (
+                          <Chip
+                            size="small"
+                            label="Denied"
+                            color="error"
+                            variant="outlined"
+                            title={d.deniedReason ?? undefined}
+                            sx={{ display: "block", mt: 0.5, width: "fit-content" }}
+                          />
+                        )}
+                      </TableCell>
                       <TableCell>{d.clockIn ? new Date(d.clockIn).toLocaleTimeString() : "—"}</TableCell>
                       <TableCell>{d.clockOut ? new Date(d.clockOut).toLocaleTimeString() : "—"}</TableCell>
                       <TableCell align="right">

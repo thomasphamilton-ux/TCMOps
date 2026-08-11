@@ -19,4 +19,14 @@ export const projectsController = {
     const { id } = req.params as { id: string };
     reply.send(await projectsService.update(Number(id), req.body as any));
   },
+
+  getRegistrationToken: async (req: FastifyRequest, reply: FastifyReply) => {
+    const { id } = req.params as { id: string };
+    reply.send(await projectsService.getRegistrationToken(Number(id)));
+  },
+
+  regenerateRegistrationToken: async (req: FastifyRequest, reply: FastifyReply) => {
+    const { id } = req.params as { id: string };
+    reply.send(await projectsService.regenerateRegistrationToken(Number(id)));
+  },
 };

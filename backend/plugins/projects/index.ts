@@ -30,4 +30,17 @@ export default fp(async (fastify) => {
     { schema: updateProjectSchema, preHandler: [authenticate, requireRole("admin")] },
     projectsController.update
   );
+
+  // Never exposed via the routes above — see omitRegistrationToken in service.ts.
+  fastify.get(
+    "/projects/:id/registration-token",
+    { preHandler: [authenticate, requireRole("admin")] },
+    projectsController.getRegistrationToken
+  );
+
+  fastify.post(
+    "/projects/:id/registration-token/regenerate",
+    { preHandler: [authenticate, requireRole("admin")] },
+    projectsController.regenerateRegistrationToken
+  );
 });

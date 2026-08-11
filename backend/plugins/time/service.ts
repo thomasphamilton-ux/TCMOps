@@ -2,6 +2,7 @@ import { and, eq, desc, gte, lte, isNotNull } from "drizzle-orm";
 import { db } from "../../db";
 import { dailyTime, dailyEntries, clockEvents, timeEditLog, users, fraudFlags, teams, lunchExceptions } from "../../db/schema";
 import { fraudService } from "../fraud/service";
+import { perDiemService } from "../per-diem/service";
 import type { AuthUser } from "../../lib/auth";
 import { HttpError } from "../../lib/http-error";
 import {
@@ -224,6 +225,7 @@ export const timeService = {
     minutes = Math.max(0, minutes);
 
     const [updated] = await db.update(dailyTime).set({ workedMinutes: minutes }).where(eq(dailyTime.id, record.id)).returning();
+    await perDiemService.recalculateWeekContaining(employeeId, date);
     return updated;
   },
 

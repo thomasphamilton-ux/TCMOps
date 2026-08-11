@@ -50,6 +50,14 @@ interface LunchException {
   approved: boolean;
 }
 
+interface PendingSubmission {
+  id: number;
+  teamId: number;
+  teamName: string;
+  date: string;
+  submittedAt: string;
+}
+
 interface DetailRow {
   team: string;
   employeeId: number;
@@ -156,6 +164,7 @@ export default function DashboardPage() {
   const [flags, setFlags] = useState<FraudFlag[]>([]);
   const [detail, setDetail] = useState<DetailRow[]>([]);
   const [lunchExceptions, setLunchExceptions] = useState<LunchException[]>([]);
+  const [pendingSubmissions, setPendingSubmissions] = useState<PendingSubmission[]>([]);
   const [expandedTeam, setExpandedTeam] = useState<string | null>(null);
   const [expandedCostCode, setExpandedCostCode] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -166,21 +175,29 @@ export default function DashboardPage() {
         ? api.get("/reports/daily", { params: { date: range.start, ...projectParam } })
         : api.get("/reports/weekly", { params: { start: range.start, end: range.end, ...projectParam } });
 
+    // Fraud/lunch/submission review queues are admin/manager/supervisor-only
+    // server-side — foreman can reach the Dashboard but not these, so they're
+    // fetched conditionally with an empty fallback rather than failing the
+    // whole Promise.all (and blanking the team totals foreman does have access to).
+    const empty = Promise.resolve({ data: [] });
+
     Promise.all([
       teamTotalsRequest,
-      api.get("/fraud", { params: { resolved: "false", ...projectParam } }),
+      canResolve ? api.get("/fraud", { params: { resolved: "false", ...projectParam } }) : empty,
       api.get("/reports/detail", { params: { start: range.start, end: range.end, ...projectParam } }),
-      api.get("/lunch-exceptions", { params: projectParam }),
+      canResolve ? api.get("/lunch-exceptions", { params: projectParam }) : empty,
+      canResolve ? api.get("/submissions", { params: projectParam }) : empty,
     ])
-      .then(([totalsRes, fraudRes, detailRes, lunchRes]) => {
+      .then(([totalsRes, fraudRes, detailRes, lunchRes, submissionsRes]) => {
         setTeamTotals(totalsRes.data);
         setFlags(fraudRes.data);
         setDetail(detailRes.data);
         setLunchExceptions(lunchRes.data);
+        setPendingSubmissions(submissionsRes.data);
       })
       .catch(() => setError("Could not load dashboard data."));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, range.start, range.end, selectedProjectId]);
+  }, [mode, range.start, range.end, selectedProjectId, canResolve]);
 
   const approveLunchException = async (id: number) => {
     try {
@@ -191,6 +208,15 @@ export default function DashboardPage() {
     }
   };
 
+  const approveSubmission = async (id: number) => {
+    try {
+      await api.patch(`/submissions/${id}/approve`);
+      setPendingSubmissions((prev) => prev.filter((s) => s.id !== id));
+    } catch {
+      setError("Could not approve submission.");
+    }
+  };
+
   const [resolvingFlagId, setResolvingFlagId] = useState<number | null>(null);
 
   const openResolveDialog = (e: MouseEvent, flagId: number) => {
@@ -198,9 +224,9 @@ export default function DashboardPage() {
     setResolvingFlagId(flagId);
   };
 
-  const submitResolve = async (reason: string, notes: string) => {
+  const submitResolve = async (reason: string, notes: string, denyHours: boolean) => {
     if (resolvingFlagId === null) return;
-    await api.patch(`/fraud/${resolvingFlagId}/resolve`, { reason, notes: notes || undefined });
+    await api.patch(`/fraud/${resolvingFlagId}/resolve`, { reason, notes: notes || undefined, denyHours });
     setFlags((prev) => prev.filter((f) => f.id !== resolvingFlagId));
     setResolvingFlagId(null);
   };
@@ -573,6 +599,40 @@ export default function DashboardPage() {
                       approveLunchException(l.id);
                     }}
                   >
+                    Approve
+                  </Button>
+                )}
+              </Box>
+            ))}
+          </Paper>
+
+          <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>
+            Pending Team Submissions
+          </Typography>
+          <Paper>
+            {pendingSubmissions.length === 0 && (
+              <Typography color="text.secondary" sx={{ p: 2 }}>
+                No pending submissions.
+              </Typography>
+            )}
+            {pendingSubmissions.map((s) => (
+              <Box
+                key={s.id}
+                sx={{
+                  p: 1.5,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  "&:last-of-type": { borderBottom: "none" },
+                }}
+              >
+                <Typography variant="body2" sx={{ flexGrow: 1 }}>
+                  {s.teamName} — {s.date}
+                </Typography>
+                {canResolve && (
+                  <Button size="small" onClick={() => approveSubmission(s.id)}>
                     Approve
                   </Button>
                 )}

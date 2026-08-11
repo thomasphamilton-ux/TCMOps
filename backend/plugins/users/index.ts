@@ -38,6 +38,12 @@ export default fp(async (fastify) => {
     usersController.update
   );
 
+  fastify.delete(
+    "/users/:id/facial-template",
+    { preHandler: [authenticate, requireRole("admin", "manager"), requireProjectScopedSelfOrRole("id", "params")] },
+    usersController.resetFacialTemplate
+  );
+
   fastify.post(
     "/users/import",
     { schema: importUsersSchema, preHandler: [authenticate, requireRole("admin", "manager")] },

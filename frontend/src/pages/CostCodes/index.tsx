@@ -38,6 +38,7 @@ interface Project {
 export default function CostCodesPage() {
   const { user: authUser } = useAuth();
   const isAdmin = authUser?.role === "admin";
+  const canManage = authUser?.role === "admin" || authUser?.role === "manager";
   const [codes, setCodes] = useState<CostCode[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [form, setForm] = useState({ code: "", description: "", allowsUnits: false, unitType: "", projectId: "" });
@@ -60,6 +61,16 @@ export default function CostCodesPage() {
       .then((res) => setProjects(res.data))
       .catch(() => setError("Could not load projects."));
   }, [isAdmin]);
+
+  const toggleActive = async (c: CostCode) => {
+    setError("");
+    try {
+      await api.patch(`/cost-codes/${c.id}`, { active: !c.active });
+      await load();
+    } catch (err: any) {
+      setError(err.response?.data?.error || "Could not update cost code.");
+    }
+  };
 
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault();
@@ -169,7 +180,13 @@ export default function CostCodesPage() {
                 <TableCell>{c.description}</TableCell>
                 <TableCell>{c.allowsUnits ? c.unitType || "yes" : "—"}</TableCell>
                 <TableCell>
-                  <Chip size="small" label={c.active ? "Active" : "Inactive"} color={c.active ? "success" : "default"} />
+                  <Chip
+                    size="small"
+                    label={c.active ? "Active" : "Inactive"}
+                    color={c.active ? "success" : "default"}
+                    onClick={canManage ? () => toggleActive(c) : undefined}
+                    sx={canManage ? { cursor: "pointer" } : undefined}
+                  />
                 </TableCell>
               </TableRow>
             ))}

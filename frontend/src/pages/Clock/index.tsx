@@ -51,6 +51,7 @@ export default function ClockPage() {
   const { user } = useAuth();
   const [today, setToday] = useState<DailyTimeRecord | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [cameraFor, setCameraFor] = useState<"in" | "out" | null>(null);
 
@@ -78,9 +79,11 @@ export default function ClockPage() {
     if (!user) return;
     setBusy(true);
     setError("");
+    setNotice("");
     try {
       const location = await getLocation();
-      await api.post("/auth/facial", { image });
+      const facial = await api.post("/auth/facial", { image });
+      if (facial.data.justEnrolled) setNotice("Facial ID enrolled for future clock-ins.");
       await api.post("/time/clock-in", {
         employeeId: user.id,
         timestamp: new Date().toISOString(),
@@ -100,7 +103,8 @@ export default function ClockPage() {
     setBusy(true);
     try {
       const location = await getLocation();
-      await api.post("/auth/facial", { image });
+      const facial = await api.post("/auth/facial", { image });
+      if (facial.data.justEnrolled) setNotice("Facial ID enrolled for future clock-ins.");
       await api.post("/time/clock-out", {
         employeeId: user.id,
         timestamp: new Date().toISOString(),
@@ -157,6 +161,11 @@ export default function ClockPage() {
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
           {error}
+        </Alert>
+      )}
+      {notice && (
+        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setNotice("")}>
+          {notice}
         </Alert>
       )}
 

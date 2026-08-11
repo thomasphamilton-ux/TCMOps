@@ -77,7 +77,10 @@ export default function MapPage() {
   }, [isAdmin, projects]);
 
   const geofenceProjects = useMemo(
-    () => (selectedProjectId ? projects.filter((p) => String(p.id) === selectedProjectId) : projects),
+    // selectedProjectId comes back from MUI's Select as whatever type the chosen MenuItem's
+    // value prop is — a number for a specific project, "" (string) for "All Projects" — so
+    // comparing against a stringified id would always miss; normalize both sides through Number.
+    () => (selectedProjectId ? projects.filter((p) => p.id === Number(selectedProjectId)) : projects),
     [projects, selectedProjectId]
   );
 
@@ -104,8 +107,8 @@ export default function MapPage() {
   }, [loadFlags]);
 
   const resolveFlag = useCallback(
-    async (flagId: number, reason: string, notes: string) => {
-      await api.patch(`/fraud/${flagId}/resolve`, { reason, notes: notes || undefined });
+    async (flagId: number, reason: string, notes: string, denyHours: boolean) => {
+      await api.patch(`/fraud/${flagId}/resolve`, { reason, notes: notes || undefined, denyHours });
       // Once resolved, that punch is no longer "possible fraud" — refetch both
       // so the marker itself disappears from the map, not just its ring.
       await Promise.all([loadFlags(), load()]);
@@ -262,6 +265,17 @@ export default function MapPage() {
             notesInput.style.marginBottom = "4px";
             resolveBox.appendChild(notesInput);
 
+            const denyLabel = document.createElement("label");
+            denyLabel.style.display = "block";
+            denyLabel.style.fontSize = "12px";
+            denyLabel.style.marginBottom = "4px";
+            const denyCheckbox = document.createElement("input");
+            denyCheckbox.type = "checkbox";
+            denyCheckbox.style.marginRight = "4px";
+            denyLabel.appendChild(denyCheckbox);
+            denyLabel.appendChild(document.createTextNode("Deny hours for this day"));
+            resolveBox.appendChild(denyLabel);
+
             const resolveError = document.createElement("div");
             resolveError.style.color = CLOCK_OUT_COLOR;
             resolveError.style.fontSize = "12px";
@@ -279,7 +293,9 @@ export default function MapPage() {
               }
               resolveButton.disabled = true;
               resolveButton.textContent = "Resolving...";
-              resolveFlag(flag.id, reasonSelect.value, notesInput.value).catch(() => setError("Could not resolve flag."));
+              resolveFlag(flag.id, reasonSelect.value, notesInput.value, denyCheckbox.checked).catch(() =>
+                setError("Could not resolve flag.")
+              );
             };
             resolveBox.appendChild(resolveButton);
 

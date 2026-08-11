@@ -12,10 +12,20 @@ export interface AuthUser {
   projectId: number | null;
 }
 
+export interface RegisterPayload {
+  token: string;
+  name: string;
+  phone: string;
+  pin: string;
+  language?: string;
+  image: string;
+}
+
 interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
   login: (phone: string, pin: string) => Promise<void>;
+  register: (payload: RegisterPayload) => Promise<void>;
   logout: () => void;
 }
 
@@ -46,12 +56,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(res.data.user);
   };
 
+  const register = async (payload: RegisterPayload) => {
+    const res = await api.post("/auth/register", payload);
+    localStorage.setItem("token", res.data.token);
+    setUser(res.data.user);
+  };
+
   const logout = () => {
     localStorage.removeItem("token");
     setUser(null);
   };
 
-  return <AuthContext.Provider value={{ user, loading, login, logout }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ user, loading, login, register, logout }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

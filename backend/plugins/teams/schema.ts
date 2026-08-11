@@ -21,6 +21,7 @@ export const updateTeamSchema = {
       foremanId: { type: ["number", "null"] },
       projectId: { type: ["number", "null"] },
       shiftStart: { type: ["string", "null"], pattern: SHIFT_START_PATTERN },
+      active: { type: "boolean" },
     },
   },
 };

@@ -20,6 +20,11 @@ export const usersController = {
     reply.send(await usersService.update(Number(id), req.body as any, req.authUser!));
   },
 
+  resetFacialTemplate: async (req: FastifyRequest, reply: FastifyReply) => {
+    const { id } = req.params as { id: string };
+    reply.send(await usersService.resetFacialTemplate(Number(id)));
+  },
+
   importExcel: async (req: FastifyRequest, reply: FastifyReply) => {
     const { file } = req.body as { file: string };
     reply.send(await usersService.importExcel(file, req.authUser!));

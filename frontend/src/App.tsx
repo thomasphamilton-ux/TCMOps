@@ -8,6 +8,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import Layout from "./components/Layout";
 
 import LoginPage from "./pages/Login";
+import RegisterPage from "./pages/Register";
 import ClockPage from "./pages/Clock";
 import DailyPage from "./pages/Daily";
 import WeeklyPage from "./pages/Weekly";
@@ -29,6 +30,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/clock" replace /> : <LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
 
       <Route
         path="/clock"

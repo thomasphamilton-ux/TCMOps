@@ -1,8 +1,17 @@
+import { randomBytes } from "crypto";
 import { eq } from "drizzle-orm";
 import { db } from "../../db";
 import { projects } from "../../db/schema";
 import type { AuthUser } from "../../lib/auth";
 import { HttpError } from "../../lib/http-error";
+
+// Never returned from list/getById/create/update — only the dedicated
+// registration-token routes below expose the raw value, since it's what
+// grants immediate active:true self-registration for that project.
+function omitRegistrationToken<T extends { registrationToken: string | null }>(project: T) {
+  const { registrationToken, ...safe } = project;
+  return safe;
+}
 
 interface GeofenceInput {
   geofenceLat?: number | null;
@@ -29,9 +38,13 @@ export const projectsService = {
   // returns that single project — keeps the frontend's "fetch /projects" call
   // uniform across roles instead of branching on admin vs not.
   async list(authUser: AuthUser) {
-    if (authUser.role === "admin") return db.select().from(projects);
-    if (authUser.projectId === null) return [];
-    return db.select().from(projects).where(eq(projects.id, authUser.projectId));
+    const rows =
+      authUser.role === "admin"
+        ? await db.select().from(projects)
+        : authUser.projectId === null
+          ? []
+          : await db.select().from(projects).where(eq(projects.id, authUser.projectId));
+    return rows.map(omitRegistrationToken);
   },
 
   async getById(id: number, authUser: AuthUser) {
@@ -40,7 +53,7 @@ export const projectsService = {
     }
     const [project] = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
     if (!project) throw new HttpError(404, "Project not found");
-    return project;
+    return omitRegistrationToken(project);
   },
 
   async create(data: { code: string; name: string; active?: boolean } & GeofenceInput) {
@@ -48,13 +61,32 @@ export const projectsService = {
       .insert(projects)
       .values({ code: data.code, name: data.name, active: data.active ?? true, ...normalizeGeofence(data) })
       .returning();
-    return created;
+    return omitRegistrationToken(created);
   },
 
   async update(id: number, data: Partial<{ code: string; name: string; active: boolean } & GeofenceInput>) {
     const { geofenceLat, geofenceLng, geofenceRadiusM, ...rest } = data;
     const patch = { ...rest, ...normalizeGeofence({ geofenceLat, geofenceLng, geofenceRadiusM }) };
     const [updated] = await db.update(projects).set(patch).where(eq(projects.id, id)).returning();
+    if (!updated) throw new HttpError(404, "Project not found");
+    return omitRegistrationToken(updated);
+  },
+
+  // Lazily creates one on first request so existing projects don't need a backfill.
+  async getRegistrationToken(id: number) {
+    const [project] = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
+    if (!project) throw new HttpError(404, "Project not found");
+    if (project.registrationToken) return { registrationToken: project.registrationToken };
+    return this.regenerateRegistrationToken(id);
+  },
+
+  async regenerateRegistrationToken(id: number) {
+    const token = randomBytes(24).toString("hex");
+    const [updated] = await db
+      .update(projects)
+      .set({ registrationToken: token })
+      .where(eq(projects.id, id))
+      .returning({ registrationToken: projects.registrationToken });
     if (!updated) throw new HttpError(404, "Project not found");
     return updated;
   },

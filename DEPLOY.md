@@ -1,7 +1,8 @@
 # Deploying TCM to the VPS (tcmops.com)
 
-Target: AlmaLinux 9 VPS at `108.175.7.151`, running Plesk, domain `tcmops.com`
-registered through IONOS. Plesk owns ports 80/443 and SSL for the box — the
+Target: Ubuntu 24.04 VPS at `108.175.7.151`, running Plesk Obsidian, domain
+`tcmops.com` registered through IONOS. Plesk owns ports 80/443 and SSL for the
+box — the
 app runs in Docker on `127.0.0.1`-only ports, and Plesk's nginx reverse-proxies
 the domain into it. Nothing else runs its own web server or touches 80/443.
 
@@ -31,14 +32,32 @@ dig +short www.tcmops.com
 
 Plesk now auto-renews the cert — no certbot/cron setup needed on your end.
 
-## 3. Install Docker (AlmaLinux 9)
+## 3. Install Docker (Ubuntu 24.04)
 
-SSH into the VPS as root or a sudo user, then:
+SSH into the VPS as root or a sudo user. First check nothing's already there
+(Plesk's own "Docker" extension, if you ever enabled it, installs `docker.io`
+from Ubuntu's repo — that conflicts with Docker's own repo below):
 
 ```bash
-sudo dnf -y install dnf-plugins-core
-sudo dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
-sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+which docker && docker --version
+```
+
+If that prints nothing, install Docker CE from Docker's official repo:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 sudo systemctl enable --now docker
 docker --version
 docker compose version
@@ -47,22 +66,18 @@ docker compose version
 This installs Docker Compose as the `docker compose` (v2) subcommand — that's
 what the commands below use.
 
-> **SELinux note:** AlmaLinux ships SELinux in enforcing mode by default. If
-> containers fail to start or can't write to a mounted volume, check
-> `sudo journalctl -u docker` and `sudo ausearch -m avc -ts recent` for denials
-> before assuming it's a Docker config problem.
+> If `which docker` above showed a pre-existing `docker.io` install from
+> Plesk/Ubuntu's own repo, remove it first (`sudo apt-get remove -y docker.io`)
+> before installing Docker CE, so the two don't fight over the `docker` group
+> and socket.
 
 ## 4. Push the code to GitHub, then clone it on the VPS
 
-This repo is already git-initialized and committed locally. From your own
-machine:
+This repo is already pushed to `github.com/thomasphamilton-ux/TCMOps` — no
+action needed on your own machine unless you've made local changes since:
 
 ```bash
-# Create an empty repo on GitHub first (github.com/new — no README/license,
-# so it stays empty for this push), then:
-git remote add origin https://github.com/<your-username>/<repo-name>.git
-git branch -M main
-git push -u origin main
+git push
 ```
 
 Then on the VPS:
@@ -70,7 +85,7 @@ Then on the VPS:
 ```bash
 sudo mkdir -p /opt/tcm
 sudo chown $USER:$USER /opt/tcm
-git clone https://github.com/<your-username>/<repo-name>.git /opt/tcm
+git clone https://github.com/thomasphamilton-ux/TCMOps.git /opt/tcm
 cd /opt/tcm
 ```
 

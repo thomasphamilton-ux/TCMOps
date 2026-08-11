@@ -41,9 +41,17 @@ export interface ExportRow {
 async function rollup(start: string, end: string, employeeIds: number[] | null) {
   if (employeeIds !== null && employeeIds.length === 0) return { start, end, teams: [] };
 
+  // Denied days are excluded from every total here — the underlying entries
+  // stay on the record (see EmployeeDetail's Daily Log) but don't count
+  // toward reports, dashboard, or exports.
   const days = await db.query.dailyTime.findMany({
-    where: (dt, { and, gte, lte, inArray: inArr }) =>
-      and(gte(dt.date, start), lte(dt.date, end), employeeIds ? inArr(dt.employeeId, employeeIds) : undefined),
+    where: (dt, { and, eq: eqCol, gte, lte, inArray: inArr }) =>
+      and(
+        gte(dt.date, start),
+        lte(dt.date, end),
+        eqCol(dt.denied, false),
+        employeeIds ? inArr(dt.employeeId, employeeIds) : undefined
+      ),
     with: { entries: true, employee: { with: { team: true } } },
   });
 
@@ -98,8 +106,13 @@ async function detailRows(start: string, end: string, employeeIds: number[] | nu
   if (employeeIds !== null && employeeIds.length === 0) return [];
 
   const days = await db.query.dailyTime.findMany({
-    where: (dt, { and, gte, lte, inArray: inArr }) =>
-      and(gte(dt.date, start), lte(dt.date, end), employeeIds ? inArr(dt.employeeId, employeeIds) : undefined),
+    where: (dt, { and, eq: eqCol, gte, lte, inArray: inArr }) =>
+      and(
+        gte(dt.date, start),
+        lte(dt.date, end),
+        eqCol(dt.denied, false),
+        employeeIds ? inArr(dt.employeeId, employeeIds) : undefined
+      ),
     with: { entries: { with: { costCode: true } }, employee: { with: { team: true } } },
     orderBy: (dt, { asc }) => [asc(dt.date)],
   });

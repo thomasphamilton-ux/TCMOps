@@ -7,9 +7,19 @@ import type { AuthUser } from "../../lib/auth";
 import { parseExcelBase64, buildImportTemplate } from "../../lib/excel";
 import { HttpError } from "../../lib/http-error";
 
-function omitPin<T extends { pinHash: string }>(user: T) {
-  const { pinHash, ...safe } = user;
-  return safe;
+// Strips the PIN hash and the raw facial template (a large base64 image blob,
+// and sensitive biometric data) from anything sent to the client — callers
+// that need to know enrollment status get the boolean instead. Also surfaces
+// the per diem rate in dollars (the API's unit) instead of the stored cents.
+function omitPin<T extends { pinHash: string; facialTemplate: string | null; perDiemRateCents: number | null }>(
+  user: T
+) {
+  const { pinHash, facialTemplate, perDiemRateCents, ...safe } = user;
+  return {
+    ...safe,
+    facialEnrolled: facialTemplate !== null,
+    perDiemRate: perDiemRateCents !== null ? perDiemRateCents / 100 : null,
+  };
 }
 
 export const usersService = {
@@ -36,6 +46,8 @@ export const usersService = {
       teamId?: number;
       projectId?: number;
       shiftExempt?: boolean;
+      classification?: string;
+      perDiemRate?: number;
     },
     authUser: AuthUser
   ) {
@@ -51,6 +63,8 @@ export const usersService = {
         teamId: data.teamId ?? null,
         projectId,
         shiftExempt: data.shiftExempt ?? false,
+        classification: data.classification || null,
+        perDiemRateCents: data.perDiemRate != null ? Math.round(data.perDiemRate * 100) : null,
       })
       .returning();
     return omitPin(created);
@@ -66,16 +80,26 @@ export const usersService = {
       active: boolean;
       pin: string;
       shiftExempt: boolean;
+      classification: string | null;
+      perDiemRate: number | null;
+      language: string | null;
     }>,
     authUser: AuthUser
   ) {
-    const { pin, projectId, ...rest } = data;
+    const { pin, projectId, perDiemRate, ...rest } = data;
     const patch: Record<string, unknown> = { ...rest };
     if (pin) patch.pinHash = await hashPin(pin);
     // Only admin may move a user between projects — manager is confined to their own.
     if (authUser.role === "admin" && projectId !== undefined) patch.projectId = projectId;
+    if (perDiemRate !== undefined) patch.perDiemRateCents = perDiemRate != null ? Math.round(perDiemRate * 100) : null;
 
     const [updated] = await db.update(users).set(patch).where(eq(users.id, id)).returning();
+    if (!updated) throw new HttpError(404, "User not found");
+    return omitPin(updated);
+  },
+
+  async resetFacialTemplate(id: number) {
+    const [updated] = await db.update(users).set({ facialTemplate: null }).where(eq(users.id, id)).returning();
     if (!updated) throw new HttpError(404, "User not found");
     return omitPin(updated);
   },

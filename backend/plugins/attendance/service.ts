@@ -4,6 +4,7 @@ import { attendanceRecords, users } from "../../db/schema";
 import type { AttendanceStatus } from "../../db/schema";
 import type { AuthUser } from "../../lib/auth";
 import { HttpError } from "../../lib/http-error";
+import { perDiemService } from "../per-diem/service";
 
 export const attendanceService = {
   async getEmployeeId(id: number): Promise<number | null> {
@@ -20,6 +21,7 @@ export const attendanceService = {
         set: { status, notes: notes ?? null, recordedBy, updatedAt: new Date() },
       })
       .returning();
+    await perDiemService.recalculateWeekContaining(employeeId, date);
     return saved;
   },
 
@@ -52,6 +54,7 @@ export const attendanceService = {
   async remove(id: number) {
     const [deleted] = await db.delete(attendanceRecords).where(eq(attendanceRecords.id, id)).returning();
     if (!deleted) throw new HttpError(404, "Attendance record not found");
+    await perDiemService.recalculateWeekContaining(deleted.employeeId, deleted.date);
     return { deleted: true };
   },
 };

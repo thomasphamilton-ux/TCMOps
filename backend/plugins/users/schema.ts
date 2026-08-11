@@ -10,6 +10,8 @@ export const createUserSchema = {
       teamId: { type: "number" },
       projectId: { type: "number" },
       shiftExempt: { type: "boolean" },
+      classification: { type: "string", maxLength: 64 },
+      perDiemRate: { type: "number", minimum: 0 },
     },
   },
 };
@@ -25,6 +27,9 @@ export const updateUserSchema = {
       active: { type: "boolean" },
       pin: { type: "string", minLength: 4, maxLength: 8 },
       shiftExempt: { type: "boolean" },
+      classification: { type: ["string", "null"], maxLength: 64 },
+      perDiemRate: { type: ["number", "null"], minimum: 0 },
+      language: { type: ["string", "null"], maxLength: 10 },
     },
   },
 };

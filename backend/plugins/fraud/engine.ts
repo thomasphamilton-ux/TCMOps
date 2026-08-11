@@ -9,7 +9,7 @@ interface DailyTimeRecord {
   clockOut: Date | null;
 }
 
-const MAX_SHIFT_HOURS = 16;
+const MAX_SHIFT_HOURS = 13;
 
 export const fraudEngine = {
   checkInvalidRange(record: DailyTimeRecord): FraudFlag | null {

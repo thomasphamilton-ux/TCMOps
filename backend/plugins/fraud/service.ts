@@ -41,7 +41,13 @@ export const fraudService = {
     return db.select().from(fraudFlags).where(eq(fraudFlags.employeeId, employeeId));
   },
 
-  async resolve(id: number, resolvedBy: number, reason: FraudResolutionReason, notes?: string) {
+  async resolve(
+    id: number,
+    resolvedBy: number,
+    reason: FraudResolutionReason,
+    notes?: string,
+    denyHours?: boolean
+  ) {
     // Resolving closes the case either way, so it also lifts any cost-coding lock.
     const [updated] = await db
       .update(fraudFlags)
@@ -56,6 +62,16 @@ export const fraudService = {
       .where(eq(fraudFlags.id, id))
       .returning();
     if (!updated) throw new HttpError(404, "Fraud flag not found");
+
+    if (denyHours) {
+      // Hours stay on the record for audit — just excluded from totals (see
+      // reports/service.ts and productivity/service.ts).
+      await db
+        .update(dailyTime)
+        .set({ denied: true, deniedReason: notes || reason, deniedBy: resolvedBy, deniedAt: new Date() })
+        .where(and(eq(dailyTime.employeeId, updated.employeeId), eq(dailyTime.date, updated.date)));
+    }
+
     return updated;
   },
 

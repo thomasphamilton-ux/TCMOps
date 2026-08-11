@@ -18,7 +18,9 @@ import {
   DialogActions,
   Stack,
 } from "@mui/material";
+import QRCode from "qrcode";
 import api from "../../api/client";
+import GeofencePicker from "../../components/GeofencePicker";
 
 interface Project {
   id: number;
@@ -54,6 +56,12 @@ export default function ProjectsPage() {
   const [editError, setEditError] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [editLocating, setEditLocating] = useState(false);
+
+  const [qrProject, setQrProject] = useState<Project | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState("");
+  const [qrUrl, setQrUrl] = useState("");
+  const [qrError, setQrError] = useState("");
+  const [qrBusy, setQrBusy] = useState(false);
 
   const load = useCallback(async () => {
     const res = await api.get("/projects");
@@ -134,6 +142,80 @@ export default function ProjectsPage() {
 
   const clearGeofence = () => setEditForm({ geofenceLat: "", geofenceLng: "", geofenceRadiusM: "" });
 
+  const toggleActive = async (project: Project) => {
+    setError("");
+    try {
+      await api.patch(`/projects/${project.id}`, { active: !project.active });
+      setProjects((prev) => prev.map((p) => (p.id === project.id ? { ...p, active: !project.active } : p)));
+    } catch (err: any) {
+      setError(err.response?.data?.error || "Could not update project.");
+    }
+  };
+
+  const renderQr = async (registrationToken: string) => {
+    const url = `${window.location.origin}/register?token=${registrationToken}`;
+    setQrUrl(url);
+    setQrDataUrl(await QRCode.toDataURL(url, { width: 320, margin: 2 }));
+  };
+
+  const openQr = async (project: Project) => {
+    setQrProject(project);
+    setQrError("");
+    setQrDataUrl("");
+    setQrBusy(true);
+    try {
+      const res = await api.get(`/projects/${project.id}/registration-token`);
+      await renderQr(res.data.registrationToken);
+    } catch (err: any) {
+      setQrError(err.response?.data?.error || "Could not load the registration code.");
+    } finally {
+      setQrBusy(false);
+    }
+  };
+
+  const closeQr = () => {
+    setQrProject(null);
+    setQrDataUrl("");
+    setQrUrl("");
+    setQrError("");
+  };
+
+  const regenerateQr = async () => {
+    if (!qrProject) return;
+    if (!window.confirm("This invalidates the current printed QR code — anyone with the old copy won't be able to register. Continue?")) {
+      return;
+    }
+    setQrError("");
+    setQrBusy(true);
+    try {
+      const res = await api.post(`/projects/${qrProject.id}/registration-token/regenerate`);
+      await renderQr(res.data.registrationToken);
+    } catch (err: any) {
+      setQrError(err.response?.data?.error || "Could not regenerate the registration code.");
+    } finally {
+      setQrBusy(false);
+    }
+  };
+
+  const printQr = () => {
+    if (!qrDataUrl || !qrProject) return;
+    const win = window.open("", "_blank", "width=420,height=560");
+    if (!win) return;
+    win.document.write(`
+      <html>
+        <head><title>Registration QR — ${qrProject.name}</title></head>
+        <body style="text-align:center; font-family: sans-serif; padding: 24px;">
+          <h2>${qrProject.name}</h2>
+          <p>Scan to register as a new employee</p>
+          <img src="${qrDataUrl}" style="width: 320px; height: 320px;" />
+        </body>
+      </html>
+    `);
+    win.document.close();
+    win.focus();
+    win.print();
+  };
+
   return (
     <Box>
       <Typography variant="h4" gutterBottom>
@@ -161,7 +243,13 @@ export default function ProjectsPage() {
         <Typography variant="body2" color="text.secondary" sx={{ mt: 2, mb: 1 }}>
           Geofence (optional) — flags clock-ins/outs made outside this radius for review, without blocking them.
         </Typography>
-        <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", alignItems: "center" }}>
+        <GeofencePicker
+          lat={form.geofenceLat ? Number(form.geofenceLat) : null}
+          lng={form.geofenceLng ? Number(form.geofenceLng) : null}
+          radiusM={form.geofenceRadiusM ? Number(form.geofenceRadiusM) : null}
+          onPick={(lat, lng) => setForm((f) => ({ ...f, geofenceLat: String(lat), geofenceLng: String(lng) }))}
+        />
+        <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", alignItems: "center", mt: 2 }}>
           <TextField
             label="Latitude"
             type="number"
@@ -209,7 +297,13 @@ export default function ProjectsPage() {
                 <TableCell>{p.code}</TableCell>
                 <TableCell>{p.name}</TableCell>
                 <TableCell>
-                  <Chip size="small" label={p.active ? "Active" : "Inactive"} color={p.active ? "success" : "default"} />
+                  <Chip
+                    size="small"
+                    label={p.active ? "Active" : "Inactive"}
+                    color={p.active ? "success" : "default"}
+                    onClick={() => toggleActive(p)}
+                    sx={{ cursor: "pointer" }}
+                  />
                 </TableCell>
                 <TableCell>
                   {p.geofenceRadiusM != null ? (
@@ -221,9 +315,14 @@ export default function ProjectsPage() {
                   )}
                 </TableCell>
                 <TableCell align="right">
-                  <Button size="small" onClick={() => openEdit(p)}>
-                    Edit Geofence
-                  </Button>
+                  <Stack direction="row" spacing={1} justifyContent="flex-end">
+                    <Button size="small" onClick={() => openQr(p)}>
+                      Registration QR
+                    </Button>
+                    <Button size="small" onClick={() => openEdit(p)}>
+                      Edit Geofence
+                    </Button>
+                  </Stack>
                 </TableCell>
               </TableRow>
             ))}
@@ -231,7 +330,7 @@ export default function ProjectsPage() {
         </Table>
       </Paper>
 
-      <Dialog open={editing !== null} onClose={closeEdit} maxWidth="xs" fullWidth>
+      <Dialog open={editing !== null} onClose={closeEdit} maxWidth="sm" fullWidth>
         <DialogTitle>Geofence — {editing?.name}</DialogTitle>
         <DialogContent>
           {editError && (
@@ -239,7 +338,15 @@ export default function ProjectsPage() {
               {editError}
             </Alert>
           )}
-          <Stack spacing={2} sx={{ mt: 1 }}>
+          <Box sx={{ mt: 1, mb: 2 }}>
+            <GeofencePicker
+              lat={editForm.geofenceLat ? Number(editForm.geofenceLat) : null}
+              lng={editForm.geofenceLng ? Number(editForm.geofenceLng) : null}
+              radiusM={editForm.geofenceRadiusM ? Number(editForm.geofenceRadiusM) : null}
+              onPick={(lat, lng) => setEditForm((f) => ({ ...f, geofenceLat: String(lat), geofenceLng: String(lng) }))}
+            />
+          </Box>
+          <Stack spacing={2}>
             <TextField
               label="Latitude"
               type="number"
@@ -270,6 +377,41 @@ export default function ProjectsPage() {
           <Button onClick={closeEdit}>Cancel</Button>
           <Button variant="contained" onClick={saveGeofence} disabled={editSaving}>
             {editSaving ? "Saving..." : "Save"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={qrProject !== null} onClose={closeQr} maxWidth="xs" fullWidth>
+        <DialogTitle>Registration QR — {qrProject?.name}</DialogTitle>
+        <DialogContent>
+          {qrError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {qrError}
+            </Alert>
+          )}
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Print this and post it at the job site. Scanning it opens a self-registration form scoped to this
+            project — new employees set their own name, phone, PIN, language, and photo, and are active
+            immediately.
+          </Typography>
+          {qrDataUrl && (
+            <Box sx={{ display: "flex", justifyContent: "center", mb: 2 }}>
+              <img src={qrDataUrl} alt="Registration QR code" width={240} height={240} />
+            </Box>
+          )}
+          {qrUrl && (
+            <Typography variant="caption" color="text.secondary" sx={{ wordBreak: "break-all" }}>
+              {qrUrl}
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={regenerateQr} color="error" disabled={qrBusy}>
+            Regenerate Code
+          </Button>
+          <Button onClick={closeQr}>Close</Button>
+          <Button variant="contained" onClick={printQr} disabled={!qrDataUrl}>
+            Print
           </Button>
         </DialogActions>
       </Dialog>

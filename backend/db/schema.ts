@@ -50,9 +50,15 @@ export const projects = pgTable("projects", {
   geofenceLat: doublePrecision("geofence_lat"),
   geofenceLng: doublePrecision("geofence_lng"),
   geofenceRadiusM: integer("geofence_radius_m"),
+  // Secret embedded in the printable self-registration QR code (see
+  // backend/plugins/auth/service.ts register()). Lazily generated on first
+  // request, rotatable from the Projects screen — never exposed on the
+  // general list/getById response, only via the dedicated admin-only route.
+  registrationToken: varchar("registration_token", { length: 64 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => ({
   codeIdx: uniqueIndex("projects_code_idx").on(table.code),
+  registrationTokenIdx: uniqueIndex("projects_registration_token_idx").on(table.registrationToken),
 }));
 
 // ---------------------------------------------------------------------------
@@ -71,11 +77,20 @@ export const users = pgTable("users", {
   photoUrl: varchar("photo_url", { length: 255 }),
   facialTemplate: text("facial_template"),
   active: boolean("active").notNull().default(true),
+  // Free-text site/trade classification (Helper, Apprentice, Journeyman, ...).
+  // No fixed list — set per-user at setup time.
+  classification: varchar("classification", { length: 64 }),
+  // Reference rate (cents) for automatic per diem calculation — see
+  // backend/plugins/per-diem/service.ts. Null means not eligible for per diem.
+  perDiemRateCents: integer("per_diem_rate_cents"),
   // Individually waives the team shift-start rules (early-grace + floor —
   // see backend/lib/timeclock.ts) regardless of role. Every role above plain
   // "employee" is exempt automatically; this covers specific rank-and-file
   // workers who also need to be excluded (e.g. flexible-schedule employees).
   shiftExempt: boolean("shift_exempt").notNull().default(false),
+  // Preferred language (e.g. "en", "es"). Currently just stored/displayed —
+  // the UI itself isn't translated yet, this is groundwork for that later.
+  language: varchar("language", { length: 10 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => ({
   phoneIdx: uniqueIndex("users_phone_idx").on(table.phone),
@@ -93,6 +108,7 @@ export const teams = pgTable("teams", {
   // clock-in early-grace window and the "time doesn't start until shift start"
   // floor — see backend/lib/timeclock.ts. Null means those rules are skipped.
   shiftStart: time("shift_start"),
+  active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -129,6 +145,13 @@ export const dailyTime = pgTable("daily_time", {
   // (clockOut - clockIn) minus the 30-minute lunch deduction, unless an
   // approved lunch exception exists for this employee+date. Null until clockOut.
   workedMinutes: integer("worked_minutes"),
+  // Set when a fraud flag for this employee+date is resolved with "deny
+  // hours" — the day's cost-code entries stay on the record for audit but are
+  // excluded from report/dashboard/productivity totals (see reports/service.ts).
+  denied: boolean("denied").notNull().default(false),
+  deniedReason: text("denied_reason"),
+  deniedBy: integer("denied_by").references(() => users.id),
+  deniedAt: timestamp("denied_at"),
   createdBy: integer("created_by").references(() => users.id),
   updatedBy: integer("updated_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -230,6 +253,23 @@ export const lunchExceptions = pgTable("lunch_exceptions", {
 }));
 
 // ---------------------------------------------------------------------------
+// daily submissions — a foreman submits their team's day for approval once
+// every member's hours are fully cost-coded or attendance-excused; a
+// supervisor-or-above then approves it. One row per team per date.
+// ---------------------------------------------------------------------------
+export const dailySubmissions = pgTable("daily_submissions", {
+  id: serial("id").primaryKey(),
+  teamId: integer("team_id").notNull().references(() => teams.id, { onDelete: "cascade" }),
+  date: date("date").notNull(),
+  submittedBy: integer("submitted_by").notNull().references(() => users.id),
+  submittedAt: timestamp("submitted_at").defaultNow().notNull(),
+  approvedBy: integer("approved_by").references(() => users.id),
+  approvedAt: timestamp("approved_at"),
+}, (table) => ({
+  teamDateIdx: uniqueIndex("daily_submissions_team_date_idx").on(table.teamId, table.date),
+}));
+
+// ---------------------------------------------------------------------------
 // per diem
 // ---------------------------------------------------------------------------
 export const perDiem = pgTable("per_diem", {
@@ -239,6 +279,11 @@ export const perDiem = pgTable("per_diem", {
   eligible: boolean("eligible").notNull().default(false),
   reason: text("reason"),
   amount: integer("amount").notNull().default(0), // cents
+  // Once true, automatic weekly recalculation (see per-diem/service.ts)
+  // leaves this row alone — a supervisor-or-above forced pay/no-pay for it.
+  manualOverride: boolean("manual_override").notNull().default(false),
+  overrideBy: integer("override_by").references(() => users.id),
+  overrideAt: timestamp("override_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => ({
   employeeDateIdx: uniqueIndex("per_diem_employee_date_idx").on(table.employeeId, table.date),

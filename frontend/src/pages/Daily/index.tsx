@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Box, Typography, Button, MenuItem, TextField, Alert, IconButton, Stack, Paper } from "@mui/material";
+import { Box, Typography, Button, MenuItem, TextField, Alert, IconButton, Stack, Paper, Chip, List, ListItem, ListItemText } from "@mui/material";
 import DeleteIcon from "@mui/icons-material/Delete";
 import { useAuth } from "../../context/AuthContext";
 import api from "../../api/client";
@@ -9,6 +9,28 @@ interface CostCode {
   code: string;
   description: string;
   allowsUnits: boolean;
+  active: boolean;
+}
+
+interface Team {
+  id: number;
+  name: string;
+}
+
+interface SubmissionStatus {
+  id: number;
+  teamId: number;
+  date: string;
+  submittedAt: string;
+  approvedBy: number | null;
+  approvedAt: string | null;
+}
+
+interface CoverageIssue {
+  employeeId: number;
+  employeeName: string;
+  issue: string;
+  detail: string;
 }
 
 interface Entry {
@@ -52,6 +74,13 @@ export default function DailyPage() {
   const [date, setDate] = useState(today);
   const [underInvestigation, setUnderInvestigation] = useState(false);
 
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [submissionTeamId, setSubmissionTeamId] = useState("");
+  const [submissionStatus, setSubmissionStatus] = useState<SubmissionStatus | null>(null);
+  const [coverageIssues, setCoverageIssues] = useState<CoverageIssue[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+
   useEffect(() => {
     if (!canPickForOthers) return;
     api.get("/users").then((res) => {
@@ -86,6 +115,47 @@ export default function DailyPage() {
   useEffect(() => {
     load().catch(() => setError("Could not load daily entry."));
   }, [load]);
+
+  useEffect(() => {
+    if (!canPickForOthers) return;
+    api.get("/teams").then((res) => setTeams(res.data));
+  }, [canPickForOthers]);
+
+  // Foreman always acts on their own team; everyone else with access picks
+  // one (defaults to the first once teams load).
+  useEffect(() => {
+    if (!canPickForOthers || teams.length === 0 || submissionTeamId) return;
+    if (user?.role === "foreman" && user.teamId) setSubmissionTeamId(String(user.teamId));
+    else setSubmissionTeamId(String(teams[0].id));
+  }, [canPickForOthers, teams, user, submissionTeamId]);
+
+  const loadSubmission = useCallback(async () => {
+    if (!canPickForOthers || !submissionTeamId) return;
+    const [statusRes, coverageRes] = await Promise.all([
+      api.get("/submissions/status", { params: { teamId: submissionTeamId, date } }),
+      api.get("/submissions/coverage", { params: { teamId: submissionTeamId, date } }),
+    ]);
+    setSubmissionStatus(statusRes.data);
+    setCoverageIssues(coverageRes.data);
+  }, [canPickForOthers, submissionTeamId, date]);
+
+  useEffect(() => {
+    loadSubmission().catch(() => setSubmitError("Could not load submission status."));
+  }, [loadSubmission]);
+
+  const submitForApproval = async () => {
+    if (!submissionTeamId) return;
+    setSubmitting(true);
+    setSubmitError("");
+    try {
+      await api.post("/submissions", { teamId: Number(submissionTeamId), date });
+      await loadSubmission();
+    } catch (err: any) {
+      setSubmitError(err.response?.data?.error || "Could not submit for approval.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const updateEntry = (index: number, patch: Partial<Entry>) => {
     setEntries((prev) => prev.map((e, i) => (i === index ? { ...e, ...patch } : e)));
@@ -195,11 +265,16 @@ export default function DailyPage() {
             onChange={(e) => updateEntry(i, { costCodeId: Number(e.target.value) })}
             sx={{ minWidth: 200 }}
           >
-            {costCodes.map((cc) => (
-              <MenuItem key={cc.id} value={cc.id}>
-                {cc.code} — {cc.description}
-              </MenuItem>
-            ))}
+            {costCodes
+              // Hide deactivated codes from new selections, but keep whichever one
+              // this row already has selected so an existing entry doesn't go blank.
+              .filter((cc) => cc.active || cc.id === entry.costCodeId)
+              .map((cc) => (
+                <MenuItem key={cc.id} value={cc.id}>
+                  {cc.code} — {cc.description}
+                  {!cc.active ? " (inactive)" : ""}
+                </MenuItem>
+              ))}
           </TextField>
           <TextField
             label="Hours"
@@ -235,6 +310,74 @@ export default function DailyPage() {
           {saving ? "Saving..." : "Save Daily"}
         </Button>
       </Stack>
+
+      {canPickForOthers && (
+        <Paper sx={{ p: 2, mt: 4 }}>
+          <Typography variant="h6" gutterBottom>
+            Submit Day for Approval
+          </Typography>
+
+          <Stack direction="row" spacing={2} sx={{ mb: 2 }} alignItems="center" flexWrap="wrap">
+            {user?.role === "foreman" ? (
+              <Typography variant="body2" color="text.secondary">
+                Team: {teams.find((t) => t.id === user.teamId)?.name ?? "—"}
+              </Typography>
+            ) : (
+              <TextField
+                select
+                label="Team"
+                size="small"
+                value={submissionTeamId}
+                onChange={(e) => setSubmissionTeamId(e.target.value)}
+                sx={{ minWidth: 200 }}
+              >
+                {teams.map((t) => (
+                  <MenuItem key={t.id} value={t.id}>
+                    {t.name}
+                  </MenuItem>
+                ))}
+              </TextField>
+            )}
+
+            {submissionStatus?.approvedAt ? (
+              <Chip label="Approved" color="success" />
+            ) : submissionStatus ? (
+              <Chip label="Submitted — awaiting approval" color="warning" />
+            ) : (
+              <Chip label="Not submitted" />
+            )}
+          </Stack>
+
+          {submitError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {submitError}
+            </Alert>
+          )}
+
+          {coverageIssues.length > 0 && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              <Typography variant="body2" sx={{ mb: 1 }}>
+                Can't submit yet — {coverageIssues.length} team member(s) need attention for {date}:
+              </Typography>
+              <List dense disablePadding>
+                {coverageIssues.map((issue) => (
+                  <ListItem key={issue.employeeId} disableGutters>
+                    <ListItemText primary={issue.employeeName} secondary={issue.detail} />
+                  </ListItem>
+                ))}
+              </List>
+            </Alert>
+          )}
+
+          <Button
+            variant="contained"
+            onClick={submitForApproval}
+            disabled={submitting || coverageIssues.length > 0 || !!submissionStatus}
+          >
+            {submitting ? "Submitting..." : "Submit for Approval"}
+          </Button>
+        </Paper>
+      )}
     </Box>
   );
 }

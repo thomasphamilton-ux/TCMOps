@@ -10,3 +10,26 @@ export const evaluatePerDiemSchema = {
     },
   },
 };
+
+export const overridePerDiemSchema = {
+  body: {
+    type: "object",
+    required: ["employeeId", "date", "eligible"],
+    properties: {
+      employeeId: { type: "number" },
+      date: { type: "string" },
+      eligible: { type: "boolean" },
+    },
+  },
+};
+
+export const clearOverrideSchema = {
+  body: {
+    type: "object",
+    required: ["employeeId", "date"],
+    properties: {
+      employeeId: { type: "number" },
+      date: { type: "string" },
+    },
+  },
+};

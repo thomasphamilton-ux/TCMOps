@@ -16,6 +16,13 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  Chip,
+  Stack,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemText,
+  Checkbox,
 } from "@mui/material";
 import api from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
@@ -25,11 +32,14 @@ interface Team {
   name: string;
   foremanId: number | null;
   shiftStart: string | null;
+  active: boolean;
 }
 
 interface UserOption {
   id: number;
   name: string;
+  role: string;
+  teamId: number | null;
 }
 
 interface Project {
@@ -58,6 +68,36 @@ export default function TeamsPage() {
   const [editShiftStart, setEditShiftStart] = useState("");
   const [editError, setEditError] = useState("");
   const [editSaving, setEditSaving] = useState(false);
+
+  const [managingTeam, setManagingTeam] = useState<Team | null>(null);
+  const [rosterSaving, setRosterSaving] = useState<number | null>(null);
+  const [rosterError, setRosterError] = useState("");
+
+  const leadershipUsers = users.filter((u) => u.role === "foreman" || u.role === "supervisor");
+
+  const toggleActive = async (team: Team) => {
+    setError("");
+    try {
+      await api.patch(`/teams/${team.id}`, { active: !team.active });
+      setTeams((prev) => prev.map((t) => (t.id === team.id ? { ...t, active: !team.active } : t)));
+    } catch (err: any) {
+      setError(err.response?.data?.error || "Could not update team.");
+    }
+  };
+
+  const toggleTeamMember = async (member: UserOption, teamId: number) => {
+    setRosterSaving(member.id);
+    setRosterError("");
+    try {
+      const newTeamId = member.teamId === teamId ? null : teamId;
+      await api.patch(`/users/${member.id}`, { teamId: newTeamId });
+      await load();
+    } catch (err: any) {
+      setRosterError(err.response?.data?.error || "Could not update assignment.");
+    } finally {
+      setRosterSaving(null);
+    }
+  };
 
   const load = useCallback(async () => {
     const [teamsRes, usersRes] = await Promise.all([api.get("/teams"), api.get("/users")]);
@@ -190,25 +230,56 @@ export default function TeamsPage() {
             <TableRow>
               <TableCell>Name</TableCell>
               <TableCell>Foreman</TableCell>
+              <TableCell>Leadership</TableCell>
               <TableCell>Shift Start</TableCell>
+              <TableCell>Status</TableCell>
               {canManage && <TableCell />}
             </TableRow>
           </TableHead>
           <TableBody>
-            {teams.map((t) => (
-              <TableRow key={t.id}>
-                <TableCell>{t.name}</TableCell>
-                <TableCell>{foremanName(t.foremanId)}</TableCell>
-                <TableCell>{toHHMM(t.shiftStart) || "Not set"}</TableCell>
-                {canManage && (
-                  <TableCell align="right">
-                    <Button size="small" onClick={() => openEdit(t)}>
-                      Edit
-                    </Button>
+            {teams.map((t) => {
+              const assigned = leadershipUsers.filter((u) => u.teamId === t.id);
+              return (
+                <TableRow key={t.id}>
+                  <TableCell>{t.name}</TableCell>
+                  <TableCell>{foremanName(t.foremanId)}</TableCell>
+                  <TableCell>
+                    <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                      {assigned.length === 0 && (
+                        <Typography variant="body2" color="text.secondary">
+                          None assigned
+                        </Typography>
+                      )}
+                      {assigned.map((u) => (
+                        <Chip key={u.id} size="small" label={`${u.name} (${u.role})`} />
+                      ))}
+                    </Stack>
                   </TableCell>
-                )}
-              </TableRow>
-            ))}
+                  <TableCell>{toHHMM(t.shiftStart) || "Not set"}</TableCell>
+                  <TableCell>
+                    <Chip
+                      size="small"
+                      label={t.active ? "Active" : "Inactive"}
+                      color={t.active ? "success" : "default"}
+                      onClick={canManage ? () => toggleActive(t) : undefined}
+                      sx={canManage ? { cursor: "pointer" } : undefined}
+                    />
+                  </TableCell>
+                  {canManage && (
+                    <TableCell align="right">
+                      <Stack direction="row" spacing={1} justifyContent="flex-end">
+                        <Button size="small" onClick={() => setManagingTeam(t)}>
+                          Leadership
+                        </Button>
+                        <Button size="small" onClick={() => openEdit(t)}>
+                          Edit
+                        </Button>
+                      </Stack>
+                    </TableCell>
+                  )}
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </Paper>
@@ -242,6 +313,47 @@ export default function TeamsPage() {
           <Button variant="contained" onClick={saveShiftStart} disabled={editSaving}>
             {editSaving ? "Saving..." : "Save"}
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={managingTeam !== null} onClose={() => setManagingTeam(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Team Leadership — {managingTeam?.name}</DialogTitle>
+        <DialogContent>
+          {rosterError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {rosterError}
+            </Alert>
+          )}
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Check anyone who should be assigned to this team — multiple foremen are supported. Assigning someone here
+            moves them off any other team they're currently on.
+          </Typography>
+          <List dense disablePadding>
+            {leadershipUsers.map((u) => (
+              <ListItem key={u.id} disablePadding>
+                <ListItemButton
+                  onClick={() => managingTeam && toggleTeamMember(u, managingTeam.id)}
+                  disabled={rosterSaving === u.id}
+                >
+                  <Checkbox
+                    edge="start"
+                    checked={managingTeam ? u.teamId === managingTeam.id : false}
+                    tabIndex={-1}
+                    disableRipple
+                  />
+                  <ListItemText primary={u.name} secondary={u.role} />
+                </ListItemButton>
+              </ListItem>
+            ))}
+            {leadershipUsers.length === 0 && (
+              <Typography variant="body2" color="text.secondary">
+                No foremen or supervisors in this project yet.
+              </Typography>
+            )}
+          </List>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setManagingTeam(null)}>Close</Button>
         </DialogActions>
       </Dialog>
     </Box>

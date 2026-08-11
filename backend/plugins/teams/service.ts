@@ -35,7 +35,13 @@ export const teamsService = {
 
   async update(
     id: number,
-    data: Partial<{ name: string; foremanId: number | null; projectId: number | null; shiftStart: string | null }>,
+    data: Partial<{
+      name: string;
+      foremanId: number | null;
+      projectId: number | null;
+      shiftStart: string | null;
+      active: boolean;
+    }>,
     authUser: AuthUser
   ) {
     const { projectId, ...rest } = data;

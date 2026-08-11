@@ -17,6 +17,7 @@ export const resolveFlagSchema = {
     properties: {
       reason: { type: "string", enum: [...FRAUD_RESOLUTION_REASONS] },
       notes: { type: "string" },
+      denyHours: { type: "boolean" },
     },
   },
 };

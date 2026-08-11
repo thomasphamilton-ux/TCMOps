@@ -18,6 +18,7 @@ import lunchExceptionsPlugin from "./plugins/lunch-exceptions";
 import fraudPlugin from "./plugins/fraud";
 import reportsPlugin from "./plugins/reports";
 import exportsPlugin from "./plugins/exports";
+import dailySubmissionsPlugin from "./plugins/daily-submissions";
 
 const uploadsDir = path.join(__dirname, "uploads");
 fs.mkdirSync(path.join(uploadsDir, "exports"), { recursive: true });
@@ -58,6 +59,7 @@ async function main() {
   await fastify.register(fraudPlugin);
   await fastify.register(reportsPlugin);
   await fastify.register(exportsPlugin);
+  await fastify.register(dailySubmissionsPlugin);
 
   fastify.setNotFoundHandler((req, reply) => {
     reply.code(404).send({ error: `Route ${req.method} ${req.url} not found` });
