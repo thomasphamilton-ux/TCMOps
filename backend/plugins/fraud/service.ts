@@ -8,28 +8,16 @@ import type { AuthUser } from "../../lib/auth";
 import { HttpError } from "../../lib/http-error";
 
 export const fraudService = {
+  // Scoped by fraudFlags' own snapshotted projectId (see db/schema.ts), not
+  // the employee's current one — an investigation stays under the project it
+  // actually happened at even after the employee is later reassigned.
   async list(resolved: boolean | undefined, authUser: AuthUser, projectId?: number) {
-    if (authUser.role === "admin") {
-      if (projectId === undefined) {
-        const rows = await db.select().from(fraudFlags);
-        return typeof resolved === "boolean" ? rows.filter((r) => r.resolved === resolved) : rows;
-      }
-      const rows = await db
-        .select({ flag: fraudFlags })
-        .from(fraudFlags)
-        .innerJoin(users, eq(fraudFlags.employeeId, users.id))
-        .where(eq(users.projectId, projectId));
-      const flags = rows.map((r) => r.flag);
-      return typeof resolved === "boolean" ? flags.filter((f) => f.resolved === resolved) : flags;
-    }
-
-    const rows = await db
-      .select({ flag: fraudFlags })
-      .from(fraudFlags)
-      .innerJoin(users, eq(fraudFlags.employeeId, users.id))
-      .where(eq(users.projectId, authUser.projectId ?? -1));
-    const flags = rows.map((r) => r.flag);
-    return typeof resolved === "boolean" ? flags.filter((f) => f.resolved === resolved) : flags;
+    const scopeProjectId = authUser.role === "admin" ? projectId : authUser.projectId ?? -1;
+    const rows =
+      scopeProjectId !== undefined
+        ? await db.select().from(fraudFlags).where(eq(fraudFlags.projectId, scopeProjectId))
+        : await db.select().from(fraudFlags);
+    return typeof resolved === "boolean" ? rows.filter((r) => r.resolved === resolved) : rows;
   },
 
   async getEmployeeId(id: number): Promise<number | null> {
@@ -111,7 +99,11 @@ export const fraudService = {
   async evaluateGeofence(employeeId: number, date: string, lat?: number, lng?: number) {
     if (lat === undefined || lng === undefined) return;
 
-    const [employee] = await db.select({ projectId: users.projectId }).from(users).where(eq(users.id, employeeId)).limit(1);
+    const [employee] = await db
+      .select({ projectId: users.projectId, teamId: users.teamId })
+      .from(users)
+      .where(eq(users.id, employeeId))
+      .limit(1);
     if (!employee?.projectId) return;
 
     const [project] = await db
@@ -127,6 +119,8 @@ export const fraudService = {
     await db.insert(fraudFlags).values({
       employeeId,
       date,
+      projectId: employee.projectId,
+      teamId: employee.teamId,
       type: "geo_mismatch",
       severity: 2,
       details: `${Math.round(distance)}m outside the ${project.radiusM}m project geofence`,
@@ -144,7 +138,10 @@ export const fraudService = {
 
     const flag = fraudEngine.evaluate(record);
     if (flag) {
-      await db.insert(fraudFlags).values({ employeeId, date, ...flag });
+      // Reuses dailyTime's own snapshot (record.projectId/teamId) rather than
+      // re-querying the employee's current record — it's the exact project/
+      // team this specific day's work was already attributed to.
+      await db.insert(fraudFlags).values({ employeeId, date, projectId: record.projectId, teamId: record.teamId, ...flag });
     }
   },
 };

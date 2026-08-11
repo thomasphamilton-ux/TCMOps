@@ -87,6 +87,8 @@ export const authService = {
       await db.insert(fraudFlags).values({
         employeeId: userId,
         date: new Date().toISOString().slice(0, 10),
+        projectId: user.projectId,
+        teamId: user.teamId,
         type: "facial_mismatch",
         severity: 2,
         details: `Confidence: ${result.confidence}`,

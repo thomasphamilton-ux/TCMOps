@@ -10,6 +10,7 @@ import {
   Paper,
   Button,
   TextField,
+  MenuItem,
   Alert,
   Chip,
   Dialog,
@@ -27,9 +28,16 @@ interface Project {
   code: string;
   name: string;
   active: boolean;
+  companyId: number | null;
   geofenceLat: number | null;
   geofenceLng: number | null;
   geofenceRadiusM: number | null;
+}
+
+interface Company {
+  id: number;
+  code: string;
+  name: string;
 }
 
 // Best-effort — the field can always be filled in by hand if this fails or is denied.
@@ -46,13 +54,21 @@ function getLocation(): Promise<{ lat: number; lng: number } | null> {
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [form, setForm] = useState({ code: "", name: "", geofenceLat: "", geofenceLng: "", geofenceRadiusM: "" });
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [form, setForm] = useState({
+    code: "",
+    name: "",
+    companyId: "",
+    geofenceLat: "",
+    geofenceLng: "",
+    geofenceRadiusM: "",
+  });
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [locating, setLocating] = useState(false);
 
   const [editing, setEditing] = useState<Project | null>(null);
-  const [editForm, setEditForm] = useState({ geofenceLat: "", geofenceLng: "", geofenceRadiusM: "" });
+  const [editForm, setEditForm] = useState({ companyId: "", geofenceLat: "", geofenceLng: "", geofenceRadiusM: "" });
   const [editError, setEditError] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [editLocating, setEditLocating] = useState(false);
@@ -72,6 +88,13 @@ export default function ProjectsPage() {
     load().catch(() => setError("Could not load projects."));
   }, [load]);
 
+  useEffect(() => {
+    api
+      .get("/companies")
+      .then((res) => setCompanies(res.data))
+      .catch(() => {});
+  }, []);
+
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
@@ -80,11 +103,12 @@ export default function ProjectsPage() {
       await api.post("/projects", {
         code: form.code,
         name: form.name,
+        companyId: form.companyId ? Number(form.companyId) : undefined,
         geofenceLat: form.geofenceLat ? Number(form.geofenceLat) : undefined,
         geofenceLng: form.geofenceLng ? Number(form.geofenceLng) : undefined,
         geofenceRadiusM: form.geofenceRadiusM ? Number(form.geofenceRadiusM) : undefined,
       });
-      setForm({ code: "", name: "", geofenceLat: "", geofenceLng: "", geofenceRadiusM: "" });
+      setForm({ code: "", name: "", companyId: "", geofenceLat: "", geofenceLng: "", geofenceRadiusM: "" });
       await load();
     } catch (err: any) {
       setError(err.response?.data?.error || "Could not create project.");
@@ -104,6 +128,7 @@ export default function ProjectsPage() {
   const openEdit = (project: Project) => {
     setEditing(project);
     setEditForm({
+      companyId: project.companyId != null ? String(project.companyId) : "",
       geofenceLat: project.geofenceLat != null ? String(project.geofenceLat) : "",
       geofenceLng: project.geofenceLng != null ? String(project.geofenceLng) : "",
       geofenceRadiusM: project.geofenceRadiusM != null ? String(project.geofenceRadiusM) : "",
@@ -127,6 +152,7 @@ export default function ProjectsPage() {
     setEditError("");
     try {
       await api.patch(`/projects/${editing.id}`, {
+        companyId: editForm.companyId ? Number(editForm.companyId) : null,
         geofenceLat: editForm.geofenceLat ? Number(editForm.geofenceLat) : null,
         geofenceLng: editForm.geofenceLng ? Number(editForm.geofenceLng) : null,
         geofenceRadiusM: editForm.geofenceRadiusM ? Number(editForm.geofenceRadiusM) : null,
@@ -140,7 +166,7 @@ export default function ProjectsPage() {
     }
   };
 
-  const clearGeofence = () => setEditForm({ geofenceLat: "", geofenceLng: "", geofenceRadiusM: "" });
+  const clearGeofence = () => setEditForm((f) => ({ ...f, geofenceLat: "", geofenceLng: "", geofenceRadiusM: "" }));
 
   const toggleActive = async (project: Project) => {
     setError("");
@@ -235,6 +261,20 @@ export default function ProjectsPage() {
         <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", alignItems: "center" }}>
           <TextField label="Code" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} required />
           <TextField label="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          <TextField
+            select
+            label="Company"
+            value={form.companyId}
+            onChange={(e) => setForm({ ...form, companyId: e.target.value })}
+            sx={{ minWidth: 180 }}
+          >
+            <MenuItem value="">Unassigned</MenuItem>
+            {companies.map((c) => (
+              <MenuItem key={c.id} value={c.id}>
+                {c.name}
+              </MenuItem>
+            ))}
+          </TextField>
           <Button type="submit" variant="contained" disabled={submitting}>
             Add
           </Button>
@@ -286,6 +326,7 @@ export default function ProjectsPage() {
             <TableRow>
               <TableCell>Code</TableCell>
               <TableCell>Name</TableCell>
+              <TableCell>Company</TableCell>
               <TableCell>Status</TableCell>
               <TableCell>Geofence</TableCell>
               <TableCell />
@@ -296,6 +337,7 @@ export default function ProjectsPage() {
               <TableRow key={p.id}>
                 <TableCell>{p.code}</TableCell>
                 <TableCell>{p.name}</TableCell>
+                <TableCell>{companies.find((c) => c.id === p.companyId)?.name ?? "—"}</TableCell>
                 <TableCell>
                   <Chip
                     size="small"
@@ -320,7 +362,7 @@ export default function ProjectsPage() {
                       Registration QR
                     </Button>
                     <Button size="small" onClick={() => openEdit(p)}>
-                      Edit Geofence
+                      Edit
                     </Button>
                   </Stack>
                 </TableCell>
@@ -331,13 +373,31 @@ export default function ProjectsPage() {
       </Paper>
 
       <Dialog open={editing !== null} onClose={closeEdit} maxWidth="sm" fullWidth>
-        <DialogTitle>Geofence — {editing?.name}</DialogTitle>
+        <DialogTitle>Edit — {editing?.name}</DialogTitle>
         <DialogContent>
           {editError && (
             <Alert severity="error" sx={{ mb: 2 }}>
               {editError}
             </Alert>
           )}
+          <TextField
+            select
+            label="Company"
+            value={editForm.companyId}
+            onChange={(e) => setEditForm({ ...editForm, companyId: e.target.value })}
+            fullWidth
+            sx={{ mb: 2 }}
+          >
+            <MenuItem value="">Unassigned</MenuItem>
+            {companies.map((c) => (
+              <MenuItem key={c.id} value={c.id}>
+                {c.name}
+              </MenuItem>
+            ))}
+          </TextField>
+          <Typography variant="subtitle2" gutterBottom>
+            Geofence
+          </Typography>
           <Box sx={{ mt: 1, mb: 2 }}>
             <GeofencePicker
               lat={editForm.geofenceLat ? Number(editForm.geofenceLat) : null}

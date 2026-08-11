@@ -39,6 +39,8 @@ interface User {
   perDiemRate: number | null;
   language: string | null;
   defaultCostCodeId: number | null;
+  archived: boolean;
+  eid: string | null;
 }
 
 interface Team {
@@ -60,6 +62,13 @@ interface Project {
   id: number;
   code: string;
   name: string;
+  companyId: number | null;
+}
+
+interface Company {
+  id: number;
+  code: string;
+  name: string;
 }
 
 const ROLES = ["admin", "manager", "supervisor", "foreman", "employee"];
@@ -72,31 +81,44 @@ export default function UsersPage() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
   const [error, setError] = useState("");
   const [form, setForm] = useState({
     name: "",
     phone: "",
     pin: "",
     role: "employee",
+    companyId: "",
     teamId: "",
     projectId: "",
     shiftExempt: false,
     classification: "",
     perDiemRate: "",
     defaultCostCodeId: "",
+    eid: "",
   });
   const [submitting, setSubmitting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+
+  // Light debounce so typing a name doesn't fire a request per keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput), 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   const load = useCallback(async () => {
     const [usersRes, teamsRes, costCodesRes] = await Promise.all([
-      api.get("/users"),
+      api.get("/users", { params: search ? { search } : undefined }),
       api.get("/teams"),
       api.get("/cost-codes"),
     ]);
     setUsers(usersRes.data);
     setTeams(teamsRes.data);
     setCostCodes(costCodesRes.data);
-  }, []);
+  }, [search]);
 
   useEffect(() => {
     load().catch(() => setError("Could not load users."));
@@ -104,11 +126,18 @@ export default function UsersPage() {
 
   useEffect(() => {
     if (!isAdmin) return;
-    api
-      .get("/projects")
-      .then((res) => setProjects(res.data))
+    Promise.all([api.get("/projects"), api.get("/companies")])
+      .then(([projectsRes, companiesRes]) => {
+        setProjects(projectsRes.data);
+        setCompanies(companiesRes.data);
+      })
       .catch(() => setError("Could not load projects."));
   }, [isAdmin]);
+
+  // Purely a UI filter — narrows which projects show up below, nothing about
+  // company is ever sent to the backend for a user record.
+  const visibleProjects =
+    isAdmin && form.companyId ? projects.filter((p) => p.companyId === Number(form.companyId)) : projects;
 
   // Manager's own project is forced server-side, so the field only matters — and
   // only needs to render — for admin. Once a project is picked, the team choices
@@ -128,6 +157,7 @@ export default function UsersPage() {
     try {
       await api.post("/users", {
         ...form,
+        companyId: undefined,
         teamId: form.teamId ? Number(form.teamId) : undefined,
         projectId: isAdmin && form.projectId ? Number(form.projectId) : undefined,
         perDiemRate: form.perDiemRate ? Number(form.perDiemRate) : undefined,
@@ -138,18 +168,38 @@ export default function UsersPage() {
         phone: "",
         pin: "",
         role: "employee",
+        companyId: "",
         teamId: "",
         projectId: "",
         shiftExempt: false,
         classification: "",
         perDiemRate: "",
         defaultCostCodeId: "",
+        eid: "",
       });
       await load();
     } catch (err: any) {
       setError(err.response?.data?.error || "Could not create user.");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleExport = async () => {
+    setExporting(true);
+    setError("");
+    try {
+      const res = await api.get("/users/export", { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `users-export-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError("Could not export users.");
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -172,11 +222,24 @@ export default function UsersPage() {
     }
   };
 
+  const toggleArchived = async (u: User) => {
+    setError("");
+    try {
+      await api.patch(`/users/${u.id}`, { archived: !u.archived });
+      // Archiving/unarchiving changes which rows the default (unsearched) roster
+      // even includes, so a local patch isn't enough — refetch under current search.
+      await load();
+    } catch (err: any) {
+      setError(err.response?.data?.error || "Could not update user.");
+    }
+  };
+
   const [editing, setEditing] = useState<User | null>(null);
   const [editForm, setEditForm] = useState({
     name: "",
     phone: "",
     role: "employee",
+    companyId: "",
     teamId: "",
     projectId: "",
     shiftExempt: false,
@@ -185,6 +248,7 @@ export default function UsersPage() {
     perDiemRate: "",
     language: "",
     defaultCostCodeId: "",
+    eid: "",
   });
   const [editError, setEditError] = useState("");
   const [editSaving, setEditSaving] = useState(false);
@@ -195,6 +259,7 @@ export default function UsersPage() {
       name: u.name,
       phone: u.phone,
       role: u.role,
+      companyId: "",
       teamId: u.teamId ? String(u.teamId) : "",
       projectId: "",
       shiftExempt: u.shiftExempt,
@@ -203,11 +268,15 @@ export default function UsersPage() {
       perDiemRate: u.perDiemRate != null ? String(u.perDiemRate) : "",
       language: u.language ?? "",
       defaultCostCodeId: u.defaultCostCodeId != null ? String(u.defaultCostCodeId) : "",
+      eid: u.eid ?? "",
     });
     setEditError("");
   };
 
   const closeEdit = () => setEditing(null);
+
+  const editVisibleProjects =
+    isAdmin && editForm.companyId ? projects.filter((p) => p.companyId === Number(editForm.companyId)) : projects;
 
   const editVisibleTeams = (
     isAdmin && editForm.projectId ? teams.filter((t) => t.projectId === Number(editForm.projectId)) : teams
@@ -233,6 +302,7 @@ export default function UsersPage() {
         perDiemRate: editForm.perDiemRate ? Number(editForm.perDiemRate) : null,
         language: editForm.language || null,
         defaultCostCodeId: editForm.defaultCostCodeId ? Number(editForm.defaultCostCodeId) : null,
+        eid: editForm.eid || null,
         ...(editForm.pin ? { pin: editForm.pin } : {}),
       });
       setEditing(null);
@@ -256,6 +326,21 @@ export default function UsersPage() {
         </Alert>
       )}
 
+      <Stack direction="row" spacing={2} alignItems="flex-start" sx={{ mb: 2 }}>
+        <TextField
+          label="Search users"
+          placeholder="Name or phone..."
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          size="small"
+          sx={{ minWidth: 280 }}
+          helperText={search ? "Searching includes archived users" : "Archived users are hidden until you search"}
+        />
+        <Button variant="outlined" onClick={handleExport} disabled={exporting} sx={{ mt: 0.5 }}>
+          {exporting ? "Exporting..." : "Export to Excel"}
+        </Button>
+      </Stack>
+
       <Paper sx={{ p: 2, mb: 3 }} component="form" onSubmit={handleCreate}>
         <Typography variant="h6" gutterBottom>
           Add User
@@ -269,6 +354,13 @@ export default function UsersPage() {
             required
           />
           <TextField label="PIN" value={form.pin} onChange={(e) => setForm({ ...form, pin: e.target.value })} required />
+          <TextField
+            label="EID"
+            placeholder="Employee ID"
+            value={form.eid}
+            onChange={(e) => setForm({ ...form, eid: e.target.value })}
+            sx={{ minWidth: 140 }}
+          />
           <TextField
             label="Classification"
             placeholder="Helper, Apprentice, Journeyman..."
@@ -314,13 +406,29 @@ export default function UsersPage() {
           {isAdmin && (
             <TextField
               select
+              label="Company"
+              value={form.companyId}
+              onChange={(e) => setForm({ ...form, companyId: e.target.value, projectId: "", teamId: "" })}
+              sx={{ minWidth: 160 }}
+            >
+              <MenuItem value="">All Companies</MenuItem>
+              {companies.map((c) => (
+                <MenuItem key={c.id} value={c.id}>
+                  {c.name}
+                </MenuItem>
+              ))}
+            </TextField>
+          )}
+          {isAdmin && (
+            <TextField
+              select
               label="Project"
               value={form.projectId}
               onChange={(e) => setForm({ ...form, projectId: e.target.value, teamId: "" })}
               sx={{ minWidth: 160 }}
             >
               <MenuItem value="">Unassigned</MenuItem>
-              {projects.map((p) => (
+              {visibleProjects.map((p) => (
                 <MenuItem key={p.id} value={p.id}>
                   {p.name}
                 </MenuItem>
@@ -373,6 +481,7 @@ export default function UsersPage() {
           <TableHead>
             <TableRow>
               <TableCell>Name</TableCell>
+              <TableCell>EID</TableCell>
               <TableCell>Phone</TableCell>
               <TableCell>Role</TableCell>
               <TableCell>Classification</TableCell>
@@ -391,21 +500,25 @@ export default function UsersPage() {
                 sx={{ cursor: "pointer" }}
               >
                 <TableCell>{u.name}</TableCell>
+                <TableCell>{u.eid ?? "—"}</TableCell>
                 <TableCell>{u.phone}</TableCell>
                 <TableCell>{u.role}</TableCell>
                 <TableCell>{u.classification ?? "—"}</TableCell>
                 <TableCell>{teams.find((t) => t.id === u.teamId)?.name ?? "—"}</TableCell>
                 <TableCell>
-                  <Chip
-                    size="small"
-                    label={u.active ? "Active" : "Inactive"}
-                    color={u.active ? "success" : "default"}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleActive(u);
-                    }}
-                    sx={{ cursor: "pointer" }}
-                  />
+                  <Stack direction="row" spacing={0.5}>
+                    <Chip
+                      size="small"
+                      label={u.active ? "Active" : "Inactive"}
+                      color={u.active ? "success" : "default"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleActive(u);
+                      }}
+                      sx={{ cursor: "pointer" }}
+                    />
+                    {u.archived && <Chip size="small" label="Archived" color="warning" variant="outlined" />}
+                  </Stack>
                 </TableCell>
                 <TableCell>
                   {u.role === "employee" ? (
@@ -421,16 +534,28 @@ export default function UsersPage() {
                     </Typography>
                   )}
                 </TableCell>
-                <TableCell>
-                  <Button
-                    size="small"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openEdit(u);
-                    }}
-                  >
-                    Edit
-                  </Button>
+                <TableCell align="right">
+                  <Stack direction="row" spacing={1} justifyContent="flex-end">
+                    <Button
+                      size="small"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openEdit(u);
+                      }}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      size="small"
+                      color={u.archived ? "primary" : "inherit"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleArchived(u);
+                      }}
+                    >
+                      {u.archived ? "Unarchive" : "Archive"}
+                    </Button>
+                  </Stack>
                 </TableCell>
               </TableRow>
             ))}
@@ -458,6 +583,12 @@ export default function UsersPage() {
               value={editForm.phone}
               onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
               required
+            />
+            <TextField
+              label="EID"
+              placeholder="Employee ID"
+              value={editForm.eid}
+              onChange={(e) => setEditForm({ ...editForm, eid: e.target.value })}
             />
             <TextField
               label="Classification"
@@ -515,13 +646,29 @@ export default function UsersPage() {
             {isAdmin && (
               <TextField
                 select
+                label="Company"
+                value={editForm.companyId}
+                onChange={(e) => setEditForm({ ...editForm, companyId: e.target.value, projectId: "", teamId: "" })}
+                helperText="Just narrows the Project list below — not saved on the user"
+              >
+                <MenuItem value="">All Companies</MenuItem>
+                {companies.map((c) => (
+                  <MenuItem key={c.id} value={c.id}>
+                    {c.name}
+                  </MenuItem>
+                ))}
+              </TextField>
+            )}
+            {isAdmin && (
+              <TextField
+                select
                 label="Project"
                 value={editForm.projectId}
                 onChange={(e) => setEditForm({ ...editForm, projectId: e.target.value, teamId: "" })}
                 helperText="Leave blank to keep the user's current project"
               >
                 <MenuItem value="">Unchanged</MenuItem>
-                {projects.map((p) => (
+                {editVisibleProjects.map((p) => (
                   <MenuItem key={p.id} value={p.id}>
                     {p.name}
                   </MenuItem>

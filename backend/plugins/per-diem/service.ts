@@ -71,7 +71,7 @@ export const perDiemService = {
     const dates = weekDates(weekStart);
 
     const [employee] = await db
-      .select({ rateCents: users.perDiemRateCents })
+      .select({ rateCents: users.perDiemRateCents, projectId: users.projectId, teamId: users.teamId })
       .from(users)
       .where(eq(users.id, employeeId))
       .limit(1);
@@ -120,9 +120,13 @@ export const perDiemService = {
           : "Worked less than 5 hours and not excused";
       const amount = eligible ? rateCents : 0;
 
+      // projectId/teamId are only ever set on first insert (the snapshot) —
+      // deliberately left out of the conflict `set` so a later recalculation
+      // (e.g. after the employee has since moved projects) can't quietly
+      // rewrite which project this day's per diem was actually earned under.
       await db
         .insert(perDiem)
-        .values({ employeeId, date: calc.date, eligible, reason, amount })
+        .values({ employeeId, date: calc.date, projectId: employee.projectId, teamId: employee.teamId, eligible, reason, amount })
         .onConflictDoUpdate({ target: [perDiem.employeeId, perDiem.date], set: { eligible, reason, amount } });
     }
 
@@ -136,7 +140,7 @@ export const perDiemService = {
   /** Supervisor-or-above forces a specific day to pay or not pay, overriding automatic calculation. */
   async setOverride(employeeId: number, date: string, eligible: boolean, overrideBy: number) {
     const [employee] = await db
-      .select({ rateCents: users.perDiemRateCents })
+      .select({ rateCents: users.perDiemRateCents, projectId: users.projectId, teamId: users.teamId })
       .from(users)
       .where(eq(users.id, employeeId))
       .limit(1);
@@ -149,9 +153,12 @@ export const perDiemService = {
       overrideBy,
       overrideAt: new Date(),
     };
+    // Same snapshot-on-insert-only rule as calculateWeek above — projectId/
+    // teamId aren't in the conflict `set`, so overriding an existing row never
+    // rewrites its original project/team attribution.
     const [saved] = await db
       .insert(perDiem)
-      .values({ employeeId, date, ...patch })
+      .values({ employeeId, date, projectId: employee?.projectId ?? null, teamId: employee?.teamId ?? null, ...patch })
       .onConflictDoUpdate({ target: [perDiem.employeeId, perDiem.date], set: patch })
       .returning();
     return saved;

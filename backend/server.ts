@@ -6,6 +6,7 @@ import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 
 import authPlugin from "./plugins/auth";
+import companiesPlugin from "./plugins/companies";
 import projectsPlugin from "./plugins/projects";
 import usersPlugin from "./plugins/users";
 import teamsPlugin from "./plugins/teams";
@@ -47,6 +48,7 @@ async function main() {
   fastify.get("/health", async () => ({ status: "ok" }));
 
   await fastify.register(authPlugin);
+  await fastify.register(companiesPlugin);
   await fastify.register(projectsPlugin);
   await fastify.register(usersPlugin);
   await fastify.register(teamsPlugin);

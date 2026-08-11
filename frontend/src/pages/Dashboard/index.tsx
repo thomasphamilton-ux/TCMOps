@@ -125,6 +125,20 @@ interface Project {
   name: string;
 }
 
+interface RosterTeamSummary {
+  team: string;
+  registered: number;
+  clockedIn: number;
+}
+
+interface RosterProjectSummary {
+  projectId: number;
+  projectName: string;
+  registered: number;
+  clockedIn: number;
+  teams: RosterTeamSummary[];
+}
+
 export default function DashboardPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -168,6 +182,18 @@ export default function DashboardPage() {
   const [expandedTeam, setExpandedTeam] = useState<string | null>(null);
   const [expandedCostCode, setExpandedCostCode] = useState<string | null>(null);
   const [error, setError] = useState("");
+
+  // Live snapshot, not tied to the daily/weekly date picker above — always
+  // "right now", one row per job the caller can see.
+  const [rosterSummary, setRosterSummary] = useState<RosterProjectSummary[]>([]);
+  const [expandedRosterProject, setExpandedRosterProject] = useState<number | null>(null);
+
+  useEffect(() => {
+    api
+      .get("/reports/roster-summary")
+      .then((res) => setRosterSummary(res.data))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const teamTotalsRequest =
@@ -353,6 +379,77 @@ export default function DashboardPage() {
             ))}
           </TextField>
         )}
+      </Paper>
+
+      <Typography variant="h6" gutterBottom>
+        Roster &amp; Clock Status — right now
+      </Typography>
+      <Paper sx={{ mb: 3 }}>
+        <Table>
+          <TableHead>
+            <TableRow>
+              <TableCell />
+              <TableCell>Job</TableCell>
+              <TableCell align="right">Registered Accounts</TableCell>
+              <TableCell align="right">Clocked In Now</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {rosterSummary.map((p) => {
+              const isOpen = expandedRosterProject === p.projectId;
+              return (
+                <Fragment key={p.projectId}>
+                  <TableRow
+                    hover
+                    sx={clickableRowSx}
+                    onClick={() => setExpandedRosterProject(isOpen ? null : p.projectId)}
+                  >
+                    <TableCell sx={{ width: 32 }}>
+                      {isOpen ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />}
+                    </TableCell>
+                    <TableCell>{p.projectName}</TableCell>
+                    <TableCell align="right">{p.registered}</TableCell>
+                    <TableCell align="right">{p.clockedIn}</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell colSpan={4} sx={{ p: 0, border: isOpen ? undefined : "none" }}>
+                      <Collapse in={isOpen} unmountOnExit>
+                        <Table size="small">
+                          <TableBody>
+                            {p.teams.length > 0 ? (
+                              p.teams.map((t) => (
+                                <TableRow key={t.team}>
+                                  <TableCell sx={{ width: 32 }} />
+                                  <TableCell sx={{ pl: 4 }}>{t.team}</TableCell>
+                                  <TableCell align="right">{t.registered}</TableCell>
+                                  <TableCell align="right">{t.clockedIn}</TableCell>
+                                </TableRow>
+                              ))
+                            ) : (
+                              <TableRow>
+                                <TableCell sx={{ width: 32 }} />
+                                <TableCell colSpan={3} sx={{ pl: 4 }}>
+                                  No registered accounts on this job.
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      </Collapse>
+                    </TableCell>
+                  </TableRow>
+                </Fragment>
+              );
+            })}
+            {rosterSummary.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={4} align="center">
+                  No jobs to show.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
       </Paper>
 
       <Grid container spacing={3}>

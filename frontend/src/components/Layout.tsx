@@ -1,20 +1,53 @@
-import type { ReactNode } from "react";
-import { AppBar, Toolbar, Typography, Button, Box } from "@mui/material";
-import { Link, useNavigate } from "react-router-dom";
+import { useState, type MouseEvent, type ReactNode } from "react";
+import { AppBar, Toolbar, Typography, Button, Box, Menu, MenuItem, ListItemIcon } from "@mui/material";
+import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
+import CheckIcon from "@mui/icons-material/Check";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth, type Role } from "../context/AuthContext";
 import Logo from "./Logo";
 
-const NAV_ITEMS: { to: string; label: string; roles?: Role[] }[] = [
-  { to: "/clock", label: "Clock" },
-  { to: "/daily", label: "Daily", roles: ["admin", "manager", "supervisor", "foreman"] },
-  { to: "/weekly", label: "Weekly" },
-  { to: "/dashboard", label: "Dashboard", roles: ["admin", "manager", "supervisor", "foreman"] },
-  { to: "/reports", label: "Exports", roles: ["admin", "manager", "supervisor", "foreman"] },
-  { to: "/map", label: "Map", roles: ["admin", "manager", "supervisor", "foreman"] },
-  { to: "/users", label: "Users", roles: ["admin", "manager"] },
-  { to: "/teams", label: "Teams", roles: ["admin", "manager"] },
-  { to: "/cost-codes", label: "Cost Codes", roles: ["admin", "manager"] },
-  { to: "/projects", label: "Projects", roles: ["admin"] },
+interface NavItem {
+  to: string;
+  label: string;
+  roles?: Role[];
+}
+
+interface NavGroup {
+  label: string;
+  items: NavItem[];
+}
+
+// Grouped by what the group is FOR, not by page type — every role gets at
+// least "My Time" (their own clock/hours); "Team" and "Setup" only appear at
+// all once the account's role clears every item inside them, so the header
+// itself already reflects security level before a single click happens.
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: "My Time",
+    items: [
+      { to: "/clock", label: "Clock" },
+      { to: "/weekly", label: "Weekly" },
+    ],
+  },
+  {
+    label: "Team",
+    items: [
+      { to: "/daily", label: "Daily", roles: ["admin", "manager", "supervisor", "foreman"] },
+      { to: "/dashboard", label: "Dashboard", roles: ["admin", "manager", "supervisor", "foreman"] },
+      { to: "/reports", label: "Exports", roles: ["admin", "manager", "supervisor", "foreman"] },
+      { to: "/map", label: "Map", roles: ["admin", "manager", "supervisor", "foreman"] },
+    ],
+  },
+  {
+    label: "Setup",
+    items: [
+      { to: "/users", label: "Users", roles: ["admin", "manager"] },
+      { to: "/teams", label: "Teams", roles: ["admin", "manager"] },
+      { to: "/cost-codes", label: "Cost Codes", roles: ["admin", "manager"] },
+      { to: "/projects", label: "Projects", roles: ["admin"] },
+      { to: "/companies", label: "Companies", roles: ["admin"] },
+    ],
+  },
 ];
 
 const blockButtonSx = {
@@ -31,14 +64,46 @@ const blockButtonSx = {
   },
 };
 
+const activeBlockButtonSx = {
+  ...blockButtonSx,
+  bgcolor: "grey.800",
+  color: "#ffffff",
+  "&:hover": {
+    ...blockButtonSx["&:hover"],
+    bgcolor: "grey.700",
+  },
+};
+
 export default function Layout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const [openGroupLabel, setOpenGroupLabel] = useState<string | null>(null);
 
   const handleLogout = () => {
     logout();
     navigate("/login");
   };
+
+  const openMenu = (e: MouseEvent<HTMLElement>, groupLabel: string) => {
+    setAnchorEl(e.currentTarget);
+    setOpenGroupLabel(groupLabel);
+  };
+
+  const closeMenu = () => {
+    setAnchorEl(null);
+    setOpenGroupLabel(null);
+  };
+
+  // Filtered per-item by role first, then any group left with zero items
+  // (e.g. "Setup" for a plain employee) is dropped entirely rather than
+  // showing an empty dropdown.
+  const visibleGroups = NAV_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => !item.roles || (user && item.roles.includes(user.role))),
+  })).filter((group) => group.items.length > 0);
 
   return (
     <Box>
@@ -48,11 +113,33 @@ export default function Layout({ children }: { children: ReactNode }) {
             <Logo size={48} />
           </Box>
 
-          {NAV_ITEMS.filter((item) => !item.roles || (user && item.roles.includes(user.role))).map((item) => (
-            <Button key={item.to} component={Link} to={item.to} sx={blockButtonSx}>
-              {item.label}
-            </Button>
-          ))}
+          {visibleGroups.map((group) => {
+            const groupActive = group.items.some((item) => location.pathname.startsWith(item.to));
+            return (
+              <Box key={group.label}>
+                <Button
+                  onClick={(e) => openMenu(e, group.label)}
+                  endIcon={<ArrowDropDownIcon />}
+                  sx={groupActive ? activeBlockButtonSx : blockButtonSx}
+                >
+                  {group.label}
+                </Button>
+                <Menu anchorEl={anchorEl} open={openGroupLabel === group.label} onClose={closeMenu}>
+                  {group.items.map((item) => {
+                    const itemActive = location.pathname.startsWith(item.to);
+                    return (
+                      <MenuItem key={item.to} component={Link} to={item.to} onClick={closeMenu} selected={itemActive}>
+                        <ListItemIcon sx={{ minWidth: 28 }}>
+                          {itemActive ? <CheckIcon fontSize="small" /> : null}
+                        </ListItemIcon>
+                        {item.label}
+                      </MenuItem>
+                    );
+                  })}
+                </Menu>
+              </Box>
+            );
+          })}
 
           <Box sx={{ flexGrow: 1 }} />
 

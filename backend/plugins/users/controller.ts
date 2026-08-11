@@ -3,7 +3,8 @@ import { usersService } from "./service";
 
 export const usersController = {
   list: async (req: FastifyRequest, reply: FastifyReply) => {
-    reply.send(await usersService.list(req.authUser!));
+    const { search } = req.query as { search?: string };
+    reply.send(await usersService.list(req.authUser!, search));
   },
 
   getOne: async (req: FastifyRequest, reply: FastifyReply) => {
@@ -35,6 +36,15 @@ export const usersController = {
     reply
       .header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
       .header("Content-Disposition", 'attachment; filename="users-import-template.xlsx"')
+      .send(buffer);
+  },
+
+  exportExcel: async (req: FastifyRequest, reply: FastifyReply) => {
+    const buffer = await usersService.exportExcel(req.authUser!);
+    const date = new Date().toISOString().slice(0, 10);
+    reply
+      .header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+      .header("Content-Disposition", `attachment; filename="users-export-${date}.xlsx"`)
       .send(buffer);
   },
 };

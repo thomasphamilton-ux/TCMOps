@@ -37,14 +37,33 @@ export const FRAUD_RESOLUTION_REASONS = [
 export type FraudResolutionReason = (typeof FRAUD_RESOLUTION_REASONS)[number];
 
 // ---------------------------------------------------------------------------
+// companies — purely organizational, one level above projects. Admin-only:
+// it doesn't change anyone's access scope (see projects' comment below),
+// it's just a way to group and filter projects that belong to the same
+// company on the Users/Teams/Cost Codes admin screens.
+// ---------------------------------------------------------------------------
+export const companies = pgTable("companies", {
+  id: serial("id").primaryKey(),
+  code: varchar("code", { length: 50 }).notNull(),
+  name: varchar("name", { length: 120 }).notNull(),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  codeIdx: uniqueIndex("companies_code_idx").on(table.code),
+}));
+
+// ---------------------------------------------------------------------------
 // projects — the multi-tenancy boundary. Every team, cost code, and non-admin
 // user belongs to exactly one project; admin has no project (global access).
+// companyId is purely organizational (see companies above) — it does not
+// widen anyone's project-scoped access, including manager's.
 // ---------------------------------------------------------------------------
 export const projects = pgTable("projects", {
   id: serial("id").primaryKey(),
   code: varchar("code", { length: 50 }).notNull(),
   name: varchar("name", { length: 120 }).notNull(),
   active: boolean("active").notNull().default(true),
+  companyId: integer("company_id").references((): any => companies.id, { onDelete: "set null" }),
   // Geofence is optional per project — all three null means "not configured,
   // skip the check" (see backend/lib/geo.ts). When set, all three are present.
   geofenceLat: doublePrecision("geofence_lat"),
@@ -80,6 +99,9 @@ export const users = pgTable("users", {
   // Free-text site/trade classification (Helper, Apprentice, Journeyman, ...).
   // No fixed list — set per-user at setup time.
   classification: varchar("classification", { length: 64 }),
+  // Company-issued employee ID — free text, no uniqueness enforced (different
+  // companies use different schemes). Purely a reference/lookup field.
+  eid: varchar("eid", { length: 64 }),
   // Reference rate (cents) for automatic per diem calculation — see
   // backend/plugins/per-diem/service.ts. Null means not eligible for per diem.
   perDiemRateCents: integer("per_diem_rate_cents"),
@@ -95,6 +117,13 @@ export const users = pgTable("users", {
   // convenience default, not a constraint. Splitting the day across multiple
   // codes or changing it manually is always still available.
   defaultCostCodeId: integer("default_cost_code_id").references((): any => costCodes.id, { onDelete: "set null" }),
+  // Stronger than `active` — an archived person is hidden from every roster
+  // and picker by default (see usersService.list) and can't log in, but their
+  // projectId/teamId and all historical time/reports stay intact. Never
+  // deleted; find them again via search, which always includes archived.
+  archived: boolean("archived").notNull().default(false),
+  archivedAt: timestamp("archived_at"),
+  archivedBy: integer("archived_by").references((): any => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => ({
   phoneIdx: uniqueIndex("users_phone_idx").on(table.phone),
@@ -140,6 +169,15 @@ export const dailyTime = pgTable("daily_time", {
   id: serial("id").primaryKey(),
   employeeId: integer("employee_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   date: date("date").notNull(),
+  // Snapshotted from the employee's projectId/teamId at the moment this row
+  // is first created (see getOrCreateDailyTime in time/service.ts) — NOT a
+  // live reference. If the employee is later moved to a different project,
+  // this row (and the reports/exports/per-diem totals built from it) keeps
+  // reflecting where the work actually happened. Nullable only because rows
+  // created before this field existed need a one-time backfill (see
+  // db/backfill-history-project.ts) from best-available (current) data.
+  projectId: integer("project_id").references((): any => projects.id, { onDelete: "set null" }),
+  teamId: integer("team_id").references((): any => teams.id, { onDelete: "set null" }),
   // Rounded to the nearest 15 minutes and, for clockIn, floored to the team's
   // shift start when configured — see backend/lib/timeclock.ts. The raw actual
   // punch stays on clock_events for fraud/audit purposes; these two are the
@@ -280,6 +318,12 @@ export const perDiem = pgTable("per_diem", {
   id: serial("id").primaryKey(),
   employeeId: integer("employee_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   date: date("date").notNull(),
+  // Snapshotted the same way as dailyTime.projectId/teamId above — captured
+  // when this row is calculated (per-diem/service.ts), not a live reference,
+  // so per diem paid stays attributed to the project the person actually
+  // worked at that week even if they're later reassigned.
+  projectId: integer("project_id").references((): any => projects.id, { onDelete: "set null" }),
+  teamId: integer("team_id").references((): any => teams.id, { onDelete: "set null" }),
   eligible: boolean("eligible").notNull().default(false),
   reason: text("reason"),
   amount: integer("amount").notNull().default(0), // cents
@@ -300,6 +344,12 @@ export const fraudFlags = pgTable("fraud_flags", {
   id: serial("id").primaryKey(),
   employeeId: integer("employee_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   date: date("date").notNull(),
+  // Snapshotted at the moment the flag is raised (see dailyTime.projectId's
+  // comment above for the full rationale) — never re-derived from the
+  // employee's current project/team, so an investigation stays attributed to
+  // wherever it actually happened even after the employee is reassigned.
+  projectId: integer("project_id").references((): any => projects.id, { onDelete: "set null" }),
+  teamId: integer("team_id").references((): any => teams.id, { onDelete: "set null" }),
   type: varchar("type", { length: 64 }).notNull(), // facial_mismatch | geo_mismatch | overlap | excessive_edits
   details: text("details"),
   severity: integer("severity").notNull().default(1),
@@ -333,7 +383,12 @@ export const exportsTable = pgTable("exports", {
 // ---------------------------------------------------------------------------
 // relations (used for query-builder joins in services)
 // ---------------------------------------------------------------------------
-export const projectsRelations = relations(projects, ({ many }) => ({
+export const companiesRelations = relations(companies, ({ many }) => ({
+  projects: many(projects),
+}));
+
+export const projectsRelations = relations(projects, ({ one, many }) => ({
+  company: one(companies, { fields: [projects.companyId], references: [companies.id] }),
   users: many(users),
   teams: many(teams),
   costCodes: many(costCodes),
@@ -357,8 +412,22 @@ export const costCodesRelations = relations(costCodes, ({ one }) => ({
 
 export const dailyTimeRelations = relations(dailyTime, ({ one, many }) => ({
   employee: one(users, { fields: [dailyTime.employeeId], references: [users.id] }),
+  project: one(projects, { fields: [dailyTime.projectId], references: [projects.id] }),
+  team: one(teams, { fields: [dailyTime.teamId], references: [teams.id] }),
   entries: many(dailyEntries),
   clockEvents: many(clockEvents),
+}));
+
+export const perDiemRelations = relations(perDiem, ({ one }) => ({
+  employee: one(users, { fields: [perDiem.employeeId], references: [users.id] }),
+  project: one(projects, { fields: [perDiem.projectId], references: [projects.id] }),
+  team: one(teams, { fields: [perDiem.teamId], references: [teams.id] }),
+}));
+
+export const fraudFlagsRelations = relations(fraudFlags, ({ one }) => ({
+  employee: one(users, { fields: [fraudFlags.employeeId], references: [users.id] }),
+  project: one(projects, { fields: [fraudFlags.projectId], references: [projects.id] }),
+  team: one(teams, { fields: [fraudFlags.teamId], references: [teams.id] }),
 }));
 
 export const dailyEntriesRelations = relations(dailyEntries, ({ one }) => ({

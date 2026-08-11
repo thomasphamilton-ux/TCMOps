@@ -55,4 +55,10 @@ export default fp(async (fastify) => {
     { preHandler: [authenticate, requireRole("admin", "manager")] },
     usersController.downloadTemplate
   );
+
+  fastify.get(
+    "/users/export",
+    { preHandler: [authenticate, requireRole("admin", "manager")] },
+    usersController.exportExcel
+  );
 });

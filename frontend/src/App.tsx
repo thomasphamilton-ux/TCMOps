@@ -19,6 +19,7 @@ import TeamsPage from "./pages/Teams";
 import CostCodesPage from "./pages/CostCodes";
 import ReportsPage from "./pages/Reports";
 import ProjectsPage from "./pages/Projects";
+import CompaniesPage from "./pages/Companies";
 import MapPage from "./pages/Map";
 
 const MANAGEMENT_ROLES = ["admin", "manager", "supervisor", "foreman"] as const;
@@ -128,6 +129,16 @@ function AppRoutes() {
           <ProtectedRoute roles={["admin"]}>
             <Layout>
               <ProjectsPage />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/companies"
+        element={
+          <ProtectedRoute roles={["admin"]}>
+            <Layout>
+              <CompaniesPage />
             </Layout>
           </ProtectedRoute>
         }

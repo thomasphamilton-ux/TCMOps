@@ -37,9 +37,11 @@ interface UserDetail {
   role: string;
   teamId: number | null;
   active: boolean;
+  archived: boolean;
   facialEnrolled: boolean;
   classification: string | null;
   perDiemRate: number | null;
+  eid: string | null;
 }
 
 interface Team {
@@ -419,11 +421,13 @@ export default function EmployeeDetailPage() {
         <Chip label={employee.phone} />
         <Chip label={employee.role} color="primary" variant="outlined" />
         <Chip label={team ? team.name : "No team"} variant="outlined" />
+        {employee.eid && <Chip label={`EID: ${employee.eid}`} variant="outlined" />}
         {employee.classification && <Chip label={employee.classification} variant="outlined" />}
         {employee.perDiemRate != null && (
           <Chip label={`Per Diem: $${employee.perDiemRate.toFixed(2)}/day`} variant="outlined" />
         )}
         <Chip label={employee.active ? "Active" : "Inactive"} color={employee.active ? "success" : "default"} />
+        {employee.archived && <Chip label="Archived" color="warning" variant="outlined" />}
         <Chip
           label={employee.facialEnrolled ? "Facial ID: Enrolled" : "Facial ID: Not enrolled"}
           color={employee.facialEnrolled ? "success" : "default"}

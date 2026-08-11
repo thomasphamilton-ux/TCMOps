@@ -67,7 +67,19 @@ async function getOrCreateDailyTime(employeeId: number, date: string, createdBy:
     .limit(1);
   if (existing) return existing;
 
-  const [created] = await db.insert(dailyTime).values({ employeeId, date, createdBy }).returning();
+  // Snapshotted once, here, at creation — see the comment on dailyTime.projectId
+  // in db/schema.ts for why this must never be re-derived from the employee's
+  // (possibly since-changed) current project/team.
+  const [employee] = await db
+    .select({ projectId: users.projectId, teamId: users.teamId })
+    .from(users)
+    .where(eq(users.id, employeeId))
+    .limit(1);
+
+  const [created] = await db
+    .insert(dailyTime)
+    .values({ employeeId, date, createdBy, projectId: employee?.projectId ?? null, teamId: employee?.teamId ?? null })
+    .returning();
   return created;
 }
 
@@ -428,15 +440,18 @@ export const timeService = {
    * Only punches tied to an open geo_mismatch flag (possible fraud) surface
    * here, so the map is a review queue, not a general location tracker.
    * Project-scoped like reports: admin sees everything (optionally narrowed
-   * to one project), everyone else is confined to their own project.
+   * to one project), everyone else is confined to their own project. Scoped
+   * by dailyTime's own snapshotted projectId (see db/schema.ts), not the
+   * employee's current one, so a punch stays under the project it actually
+   * happened at even after the employee is later reassigned.
    */
   async getLocations(start: string, end: string, authUser: AuthUser, projectId?: number) {
     const conditions = [gte(dailyTime.date, start), lte(dailyTime.date, end), isNotNull(clockEvents.lat), isNotNull(clockEvents.lng)];
 
     if (authUser.role === "admin") {
-      if (projectId !== undefined) conditions.push(eq(users.projectId, projectId));
+      if (projectId !== undefined) conditions.push(eq(dailyTime.projectId, projectId));
     } else {
-      conditions.push(eq(users.projectId, authUser.projectId ?? -1));
+      conditions.push(eq(dailyTime.projectId, authUser.projectId ?? -1));
     }
 
     const rows = await db

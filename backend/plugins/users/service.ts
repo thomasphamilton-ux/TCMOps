@@ -1,10 +1,10 @@
-import { eq } from "drizzle-orm";
+import { and, eq, ilike, or } from "drizzle-orm";
 import { db } from "../../db";
-import { users, teams, ROLES } from "../../db/schema";
+import { users, teams, costCodes, projects, ROLES } from "../../db/schema";
 import type { Role } from "../../db/schema";
 import { hashPin } from "../../lib/auth";
 import type { AuthUser } from "../../lib/auth";
-import { parseExcelBase64, buildImportTemplate } from "../../lib/excel";
+import { parseExcelBase64, buildImportTemplate, buildExcelWorkbook } from "../../lib/excel";
 import { HttpError } from "../../lib/http-error";
 
 // Strips the PIN hash and the raw facial template (a large base64 image blob,
@@ -23,11 +23,18 @@ function omitPin<T extends { pinHash: string; facialTemplate: string | null; per
 }
 
 export const usersService = {
-  async list(authUser: AuthUser) {
-    const rows =
-      authUser.role === "admin"
-        ? await db.select().from(users)
-        : await db.select().from(users).where(eq(users.projectId, authUser.projectId ?? -1));
+  // No `search` — everyday rosters and pickers, archived people stay hidden.
+  // With `search` — a deliberate lookup, so it matches name/phone across
+  // archived people too (that's the whole point of archiving over deleting).
+  async list(authUser: AuthUser, search?: string) {
+    const scope = authUser.role === "admin" ? undefined : eq(users.projectId, authUser.projectId ?? -1);
+    const trimmed = search?.trim();
+    const filter = trimmed
+      ? or(ilike(users.name, `%${trimmed}%`), ilike(users.phone, `%${trimmed}%`), ilike(users.eid, `%${trimmed}%`))
+      : eq(users.archived, false);
+    const where = scope ? and(scope, filter) : filter;
+
+    const rows = await db.select().from(users).where(where);
     return rows.map(omitPin);
   },
 
@@ -49,6 +56,7 @@ export const usersService = {
       classification?: string;
       perDiemRate?: number;
       defaultCostCodeId?: number;
+      eid?: string;
     },
     authUser: AuthUser
   ) {
@@ -67,6 +75,7 @@ export const usersService = {
         classification: data.classification || null,
         perDiemRateCents: data.perDiemRate != null ? Math.round(data.perDiemRate * 100) : null,
         defaultCostCodeId: data.defaultCostCodeId ?? null,
+        eid: data.eid || null,
       })
       .returning();
     return omitPin(created);
@@ -86,15 +95,30 @@ export const usersService = {
       perDiemRate: number | null;
       language: string | null;
       defaultCostCodeId: number | null;
+      archived: boolean;
+      eid: string | null;
     }>,
     authUser: AuthUser
   ) {
-    const { pin, projectId, perDiemRate, ...rest } = data;
+    const { pin, projectId, perDiemRate, archived, ...rest } = data;
     const patch: Record<string, unknown> = { ...rest };
     if (pin) patch.pinHash = await hashPin(pin);
     // Only admin may move a user between projects — manager is confined to their own.
     if (authUser.role === "admin" && projectId !== undefined) patch.projectId = projectId;
     if (perDiemRate !== undefined) patch.perDiemRateCents = perDiemRate != null ? Math.round(perDiemRate * 100) : null;
+    if (archived !== undefined) {
+      patch.archived = archived;
+      if (archived) {
+        // Can't log in while archived — un-archiving deliberately doesn't
+        // restore this on its own, so re-granting access is a separate step.
+        patch.active = false;
+        patch.archivedAt = new Date();
+        patch.archivedBy = authUser.id;
+      } else {
+        patch.archivedAt = null;
+        patch.archivedBy = null;
+      }
+    }
 
     const [updated] = await db.update(users).set(patch).where(eq(users.id, id)).returning();
     if (!updated) throw new HttpError(404, "User not found");
@@ -185,6 +209,63 @@ export const usersService = {
           team: allTeams[i]?.name ?? "",
         })),
       }
+    );
+  },
+
+  // Full data dump for backup/reporting — deliberately includes archived
+  // users (unlike list()'s default roster view), since the whole point of an
+  // export is to have everything, not just who's currently active.
+  async exportExcel(authUser: AuthUser) {
+    const rows =
+      authUser.role === "admin"
+        ? await db.select().from(users)
+        : await db.select().from(users).where(eq(users.projectId, authUser.projectId ?? -1));
+
+    const [allTeams, allProjects, allCostCodes] = await Promise.all([
+      db.select().from(teams),
+      db.select().from(projects),
+      db.select().from(costCodes),
+    ]);
+    const teamName = new Map(allTeams.map((t) => [t.id, t.name]));
+    const projectName = new Map(allProjects.map((p) => [p.id, p.name]));
+    const costCodeLabel = new Map(allCostCodes.map((c) => [c.id, c.code]));
+
+    return buildExcelWorkbook(
+      "Users",
+      [
+        { header: "ID", key: "id", width: 8 },
+        { header: "Name", key: "name", width: 24 },
+        { header: "Phone", key: "phone", width: 16 },
+        { header: "EID", key: "eid", width: 14 },
+        { header: "Role", key: "role", width: 12 },
+        { header: "Classification", key: "classification", width: 18 },
+        { header: "Project", key: "project", width: 20 },
+        { header: "Team", key: "team", width: 18 },
+        { header: "Default Cost Code", key: "defaultCostCode", width: 18 },
+        { header: "Per Diem Rate", key: "perDiemRate", width: 14 },
+        { header: "Language", key: "language", width: 10 },
+        { header: "Shift Exempt", key: "shiftExempt", width: 12 },
+        { header: "Status", key: "status", width: 10 },
+        { header: "Archived", key: "archived", width: 10 },
+        { header: "Created", key: "createdAt", width: 14 },
+      ],
+      rows.map((u) => ({
+        id: u.id,
+        name: u.name,
+        phone: u.phone,
+        eid: u.eid ?? "",
+        role: u.role,
+        classification: u.classification ?? "",
+        project: u.projectId ? projectName.get(u.projectId) ?? "" : "",
+        team: u.teamId ? teamName.get(u.teamId) ?? "" : "",
+        defaultCostCode: u.defaultCostCodeId ? costCodeLabel.get(u.defaultCostCodeId) ?? "" : "",
+        perDiemRate: u.perDiemRateCents != null ? u.perDiemRateCents / 100 : "",
+        language: u.language ?? "",
+        shiftExempt: u.shiftExempt ? "Yes" : "No",
+        status: u.active ? "Active" : "Inactive",
+        archived: u.archived ? "Yes" : "No",
+        createdAt: u.createdAt.toISOString().slice(0, 10),
+      }))
     );
   },
 };

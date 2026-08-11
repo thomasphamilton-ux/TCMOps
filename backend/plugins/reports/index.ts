@@ -21,4 +21,10 @@ export default fp(async (fastify) => {
     { preHandler: [authenticate, requireRole("admin", "manager", "supervisor", "foreman")] },
     reportsController.detail
   );
+
+  fastify.get(
+    "/reports/roster-summary",
+    { preHandler: [authenticate, requireRole("admin", "manager", "supervisor", "foreman")] },
+    reportsController.rosterSummary
+  );
 });

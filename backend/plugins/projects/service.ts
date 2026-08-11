@@ -56,15 +56,24 @@ export const projectsService = {
     return omitRegistrationToken(project);
   },
 
-  async create(data: { code: string; name: string; active?: boolean } & GeofenceInput) {
+  async create(data: { code: string; name: string; active?: boolean; companyId?: number | null } & GeofenceInput) {
     const [created] = await db
       .insert(projects)
-      .values({ code: data.code, name: data.name, active: data.active ?? true, ...normalizeGeofence(data) })
+      .values({
+        code: data.code,
+        name: data.name,
+        active: data.active ?? true,
+        companyId: data.companyId ?? null,
+        ...normalizeGeofence(data),
+      })
       .returning();
     return omitRegistrationToken(created);
   },
 
-  async update(id: number, data: Partial<{ code: string; name: string; active: boolean } & GeofenceInput>) {
+  async update(
+    id: number,
+    data: Partial<{ code: string; name: string; active: boolean; companyId: number | null } & GeofenceInput>
+  ) {
     const { geofenceLat, geofenceLng, geofenceRadiusM, ...rest } = data;
     const patch = { ...rest, ...normalizeGeofence({ geofenceLat, geofenceLng, geofenceRadiusM }) };
     const [updated] = await db.update(projects).set(patch).where(eq(projects.id, id)).returning();

@@ -27,4 +27,8 @@ export const reportsController = {
     const today = new Date().toISOString().slice(0, 10);
     reply.send(await reportsService.detailRows(start ?? today, end ?? today, req.authUser!, parseProjectId(projectId)));
   },
+
+  rosterSummary: async (req: FastifyRequest, reply: FastifyReply) => {
+    reply.send(await reportsService.rosterSummary(req.authUser!));
+  },
 };

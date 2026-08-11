@@ -13,6 +13,7 @@ export const createUserSchema = {
       classification: { type: "string", maxLength: 64 },
       perDiemRate: { type: "number", minimum: 0 },
       defaultCostCodeId: { type: "number" },
+      eid: { type: "string", maxLength: 64 },
     },
   },
 };
@@ -32,6 +33,8 @@ export const updateUserSchema = {
       perDiemRate: { type: ["number", "null"], minimum: 0 },
       language: { type: ["string", "null"], maxLength: 10 },
       defaultCostCodeId: { type: ["number", "null"] },
+      archived: { type: "boolean" },
+      eid: { type: ["string", "null"], maxLength: 64 },
     },
   },
 };

@@ -46,6 +46,13 @@ interface Project {
   id: number;
   code: string;
   name: string;
+  companyId: number | null;
+}
+
+interface Company {
+  id: number;
+  code: string;
+  name: string;
 }
 
 // Postgres "time" columns come back as "HH:MM:SS" — trim to "HH:MM" for the <input type="time"> and for display.
@@ -60,7 +67,8 @@ export default function TeamsPage() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [users, setUsers] = useState<UserOption[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [form, setForm] = useState({ name: "", foremanId: "", projectId: "", shiftStart: "" });
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [form, setForm] = useState({ name: "", foremanId: "", companyId: "", projectId: "", shiftStart: "" });
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -111,11 +119,17 @@ export default function TeamsPage() {
 
   useEffect(() => {
     if (!isAdmin) return;
-    api
-      .get("/projects")
-      .then((res) => setProjects(res.data))
+    Promise.all([api.get("/projects"), api.get("/companies")])
+      .then(([projectsRes, companiesRes]) => {
+        setProjects(projectsRes.data);
+        setCompanies(companiesRes.data);
+      })
       .catch(() => setError("Could not load projects."));
   }, [isAdmin]);
+
+  // Purely a UI filter — narrows which projects show up below.
+  const visibleProjects =
+    isAdmin && form.companyId ? projects.filter((p) => p.companyId === Number(form.companyId)) : projects;
 
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault();
@@ -128,7 +142,7 @@ export default function TeamsPage() {
         projectId: isAdmin && form.projectId ? Number(form.projectId) : undefined,
         shiftStart: form.shiftStart || undefined,
       });
-      setForm({ name: "", foremanId: "", projectId: "", shiftStart: "" });
+      setForm({ name: "", foremanId: "", companyId: "", projectId: "", shiftStart: "" });
       await load();
     } catch (err: any) {
       setError(err.response?.data?.error || "Could not create team.");
@@ -197,13 +211,29 @@ export default function TeamsPage() {
           {isAdmin && (
             <TextField
               select
+              label="Company"
+              value={form.companyId}
+              onChange={(e) => setForm({ ...form, companyId: e.target.value, projectId: "" })}
+              sx={{ minWidth: 160 }}
+            >
+              <MenuItem value="">All Companies</MenuItem>
+              {companies.map((c) => (
+                <MenuItem key={c.id} value={c.id}>
+                  {c.name}
+                </MenuItem>
+              ))}
+            </TextField>
+          )}
+          {isAdmin && (
+            <TextField
+              select
               label="Project"
               value={form.projectId}
               onChange={(e) => setForm({ ...form, projectId: e.target.value })}
               sx={{ minWidth: 160 }}
             >
               <MenuItem value="">Unassigned</MenuItem>
-              {projects.map((p) => (
+              {visibleProjects.map((p) => (
                 <MenuItem key={p.id} value={p.id}>
                   {p.name}
                 </MenuItem>
