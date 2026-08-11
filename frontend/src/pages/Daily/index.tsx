@@ -92,12 +92,14 @@ export default function DailyPage() {
 
   const load = useCallback(async () => {
     if (!targetEmployeeId) return;
-    const [codesRes, dailyRes] = await Promise.all([
+    const [codesRes, dailyRes, employeeRes] = await Promise.all([
       api.get("/cost-codes"),
       api.get(`/time/daily/${targetEmployeeId}`, { params: { start: date, end: date } }),
+      api.get(`/users/${targetEmployeeId}`),
     ]);
     setCostCodes(codesRes.data);
     const day = dailyRes.data[0];
+    const defaultCostCodeId = employeeRes.data.defaultCostCodeId as number | null;
     setEntries(
       day?.entries?.length
         ? day.entries.map((e: any) => ({
@@ -106,7 +108,12 @@ export default function DailyPage() {
             units: e.units ?? "",
             notes: e.notes ?? "",
           }))
-        : []
+        // Blank day — pre-fill one row with this person's default cost code as a
+        // convenience starting point. Still just a normal, freely editable row:
+        // change it, clear it, or add more via "Add Entry" to split the day.
+        : defaultCostCodeId != null
+          ? [{ costCodeId: defaultCostCodeId, hours: "", units: "", notes: "" }]
+          : []
     );
     setUnderInvestigation(!!day?.underInvestigation);
     setSaved(false);

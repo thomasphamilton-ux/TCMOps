@@ -12,6 +12,7 @@ export const createUserSchema = {
       shiftExempt: { type: "boolean" },
       classification: { type: "string", maxLength: 64 },
       perDiemRate: { type: "number", minimum: 0 },
+      defaultCostCodeId: { type: "number" },
     },
   },
 };
@@ -30,6 +31,7 @@ export const updateUserSchema = {
       classification: { type: ["string", "null"], maxLength: 64 },
       perDiemRate: { type: ["number", "null"], minimum: 0 },
       language: { type: ["string", "null"], maxLength: 10 },
+      defaultCostCodeId: { type: ["number", "null"] },
     },
   },
 };

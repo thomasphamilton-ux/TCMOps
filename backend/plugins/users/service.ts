@@ -48,6 +48,7 @@ export const usersService = {
       shiftExempt?: boolean;
       classification?: string;
       perDiemRate?: number;
+      defaultCostCodeId?: number;
     },
     authUser: AuthUser
   ) {
@@ -65,6 +66,7 @@ export const usersService = {
         shiftExempt: data.shiftExempt ?? false,
         classification: data.classification || null,
         perDiemRateCents: data.perDiemRate != null ? Math.round(data.perDiemRate * 100) : null,
+        defaultCostCodeId: data.defaultCostCodeId ?? null,
       })
       .returning();
     return omitPin(created);
@@ -83,6 +85,7 @@ export const usersService = {
       classification: string | null;
       perDiemRate: number | null;
       language: string | null;
+      defaultCostCodeId: number | null;
     }>,
     authUser: AuthUser
   ) {

@@ -38,11 +38,20 @@ interface User {
   classification: string | null;
   perDiemRate: number | null;
   language: string | null;
+  defaultCostCodeId: number | null;
 }
 
 interface Team {
   id: number;
   name: string;
+  projectId: number | null;
+  active: boolean;
+}
+
+interface CostCode {
+  id: number;
+  code: string;
+  description: string;
   projectId: number | null;
   active: boolean;
 }
@@ -61,6 +70,7 @@ export default function UsersPage() {
   const isAdmin = authUser?.role === "admin";
   const [users, setUsers] = useState<User[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
+  const [costCodes, setCostCodes] = useState<CostCode[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState("");
   const [form, setForm] = useState({
@@ -73,13 +83,19 @@ export default function UsersPage() {
     shiftExempt: false,
     classification: "",
     perDiemRate: "",
+    defaultCostCodeId: "",
   });
   const [submitting, setSubmitting] = useState(false);
 
   const load = useCallback(async () => {
-    const [usersRes, teamsRes] = await Promise.all([api.get("/users"), api.get("/teams")]);
+    const [usersRes, teamsRes, costCodesRes] = await Promise.all([
+      api.get("/users"),
+      api.get("/teams"),
+      api.get("/cost-codes"),
+    ]);
     setUsers(usersRes.data);
     setTeams(teamsRes.data);
+    setCostCodes(costCodesRes.data);
   }, []);
 
   useEffect(() => {
@@ -101,6 +117,10 @@ export default function UsersPage() {
     isAdmin && form.projectId ? teams.filter((t) => t.projectId === Number(form.projectId)) : teams
   ).filter((t) => t.active || t.id === Number(form.teamId));
 
+  const visibleCostCodes = (
+    isAdmin && form.projectId ? costCodes.filter((cc) => cc.projectId === Number(form.projectId)) : costCodes
+  ).filter((cc) => cc.active || cc.id === Number(form.defaultCostCodeId));
+
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
@@ -111,6 +131,7 @@ export default function UsersPage() {
         teamId: form.teamId ? Number(form.teamId) : undefined,
         projectId: isAdmin && form.projectId ? Number(form.projectId) : undefined,
         perDiemRate: form.perDiemRate ? Number(form.perDiemRate) : undefined,
+        defaultCostCodeId: form.defaultCostCodeId ? Number(form.defaultCostCodeId) : undefined,
       });
       setForm({
         name: "",
@@ -122,6 +143,7 @@ export default function UsersPage() {
         shiftExempt: false,
         classification: "",
         perDiemRate: "",
+        defaultCostCodeId: "",
       });
       await load();
     } catch (err: any) {
@@ -162,6 +184,7 @@ export default function UsersPage() {
     classification: "",
     perDiemRate: "",
     language: "",
+    defaultCostCodeId: "",
   });
   const [editError, setEditError] = useState("");
   const [editSaving, setEditSaving] = useState(false);
@@ -179,6 +202,7 @@ export default function UsersPage() {
       classification: u.classification ?? "",
       perDiemRate: u.perDiemRate != null ? String(u.perDiemRate) : "",
       language: u.language ?? "",
+      defaultCostCodeId: u.defaultCostCodeId != null ? String(u.defaultCostCodeId) : "",
     });
     setEditError("");
   };
@@ -188,6 +212,10 @@ export default function UsersPage() {
   const editVisibleTeams = (
     isAdmin && editForm.projectId ? teams.filter((t) => t.projectId === Number(editForm.projectId)) : teams
   ).filter((t) => t.active || t.id === Number(editForm.teamId));
+
+  const editVisibleCostCodes = (
+    isAdmin && editForm.projectId ? costCodes.filter((cc) => cc.projectId === Number(editForm.projectId)) : costCodes
+  ).filter((cc) => cc.active || cc.id === Number(editForm.defaultCostCodeId));
 
   const saveEdit = async () => {
     if (!editing) return;
@@ -204,6 +232,7 @@ export default function UsersPage() {
         classification: editForm.classification || null,
         perDiemRate: editForm.perDiemRate ? Number(editForm.perDiemRate) : null,
         language: editForm.language || null,
+        defaultCostCodeId: editForm.defaultCostCodeId ? Number(editForm.defaultCostCodeId) : null,
         ...(editForm.pin ? { pin: editForm.pin } : {}),
       });
       setEditing(null);
@@ -255,6 +284,20 @@ export default function UsersPage() {
             sx={{ width: 170 }}
             inputProps={{ step: "0.01", min: 0 }}
           />
+          <TextField
+            select
+            label="Default Cost Code"
+            value={form.defaultCostCodeId}
+            onChange={(e) => setForm({ ...form, defaultCostCodeId: e.target.value })}
+            sx={{ minWidth: 200 }}
+          >
+            <MenuItem value="">None</MenuItem>
+            {visibleCostCodes.map((cc) => (
+              <MenuItem key={cc.id} value={cc.id}>
+                {cc.code} — {cc.description}
+              </MenuItem>
+            ))}
+          </TextField>
           <TextField
             select
             label="Role"
@@ -430,6 +473,20 @@ export default function UsersPage() {
               inputProps={{ step: "0.01", min: 0 }}
               helperText="Leave blank if this person isn't eligible for per diem"
             />
+            <TextField
+              select
+              label="Default Cost Code"
+              value={editForm.defaultCostCodeId}
+              onChange={(e) => setEditForm({ ...editForm, defaultCostCodeId: e.target.value })}
+              helperText="Pre-fills the first entry on their Daily page — they can still change it or split the day"
+            >
+              <MenuItem value="">None</MenuItem>
+              {editVisibleCostCodes.map((cc) => (
+                <MenuItem key={cc.id} value={cc.id}>
+                  {cc.code} — {cc.description}
+                </MenuItem>
+              ))}
+            </TextField>
             <TextField
               select
               label="Language"

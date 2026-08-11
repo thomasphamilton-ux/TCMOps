@@ -91,6 +91,10 @@ export const users = pgTable("users", {
   // Preferred language (e.g. "en", "es"). Currently just stored/displayed —
   // the UI itself isn't translated yet, this is groundwork for that later.
   language: varchar("language", { length: 10 }),
+  // Pre-fills the first entry row on the Daily page for this person — a
+  // convenience default, not a constraint. Splitting the day across multiple
+  // codes or changing it manually is always still available.
+  defaultCostCodeId: integer("default_cost_code_id").references((): any => costCodes.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => ({
   phoneIdx: uniqueIndex("users_phone_idx").on(table.phone),
