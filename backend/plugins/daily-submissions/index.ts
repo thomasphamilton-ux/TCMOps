@@ -20,6 +20,12 @@ export default fp(async (fastify) => {
     dailySubmissionsController.status
   );
 
+  fastify.get(
+    "/submissions/team-daily",
+    { preHandler: [authenticate, requireRole("admin", "manager", "supervisor", "foreman")] },
+    dailySubmissionsController.teamDaily
+  );
+
   fastify.post(
     "/submissions",
     { schema: submitDailySchema, preHandler: [authenticate, requireRole("admin", "manager", "supervisor", "foreman")] },

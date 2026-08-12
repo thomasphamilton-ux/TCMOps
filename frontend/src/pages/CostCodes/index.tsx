@@ -15,6 +15,11 @@ import {
   MenuItem,
   Alert,
   Chip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Stack,
 } from "@mui/material";
 import api from "../../api/client";
 import ExcelImport from "../../components/ExcelImport";
@@ -27,6 +32,13 @@ interface CostCode {
   allowsUnits: boolean;
   unitType: string | null;
   active: boolean;
+  taskType: string | null;
+  budgetHours: number | null;
+  incurredHours: number;
+  remainingHours: number | null;
+  budgetUnits: number | null;
+  incurredUnits: number;
+  remainingUnits: number | null;
 }
 
 interface Project {
@@ -40,6 +52,12 @@ interface Company {
   id: number;
   code: string;
   name: string;
+}
+
+// "—" for untracked budgets, otherwise fixed to 1 decimal so the incurred
+// side (which is often a non-round number of minutes/60) doesn't jitter.
+function fmtNum(n: number | null): string {
+  return n == null ? "—" : n.toFixed(1);
 }
 
 export default function CostCodesPage() {
@@ -56,6 +74,9 @@ export default function CostCodesPage() {
     unitType: "",
     companyId: "",
     projectId: "",
+    taskType: "",
+    budgetHours: "",
+    budgetUnits: "",
   });
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -103,13 +124,75 @@ export default function CostCodesPage() {
         companyId: undefined,
         unitType: form.unitType || undefined,
         projectId: isAdmin && form.projectId ? Number(form.projectId) : undefined,
+        taskType: form.taskType || undefined,
+        budgetHours: form.budgetHours ? Number(form.budgetHours) : undefined,
+        budgetUnits: form.budgetUnits ? Number(form.budgetUnits) : undefined,
       });
-      setForm({ code: "", description: "", allowsUnits: false, unitType: "", companyId: "", projectId: "" });
+      setForm({
+        code: "",
+        description: "",
+        allowsUnits: false,
+        unitType: "",
+        companyId: "",
+        projectId: "",
+        taskType: "",
+        budgetHours: "",
+        budgetUnits: "",
+      });
       await load();
     } catch (err: any) {
       setError(err.response?.data?.error || "Could not create cost code.");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const [editing, setEditing] = useState<CostCode | null>(null);
+  const [editForm, setEditForm] = useState({
+    description: "",
+    allowsUnits: false,
+    unitType: "",
+    taskType: "",
+    budgetHours: "",
+    budgetUnits: "",
+  });
+  const [editError, setEditError] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+
+  const openEdit = (c: CostCode) => {
+    setEditing(c);
+    setEditForm({
+      description: c.description,
+      allowsUnits: c.allowsUnits,
+      unitType: c.unitType ?? "",
+      taskType: c.taskType ?? "",
+      budgetHours: c.budgetHours != null ? String(c.budgetHours) : "",
+      budgetUnits: c.budgetUnits != null ? String(c.budgetUnits) : "",
+    });
+    setEditError("");
+  };
+
+  const closeEdit = () => setEditing(null);
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    setEditSaving(true);
+    setEditError("");
+    try {
+      await api.patch(`/cost-codes/${editing.id}`, {
+        description: editForm.description,
+        allowsUnits: editForm.allowsUnits,
+        unitType: editForm.allowsUnits ? editForm.unitType || null : null,
+        taskType: editForm.taskType || null,
+        budgetHours: editForm.budgetHours ? Number(editForm.budgetHours) : null,
+        budgetUnits: editForm.budgetUnits ? Number(editForm.budgetUnits) : null,
+      });
+      setEditing(null);
+      await load();
+    } catch (err: any) {
+      setEditError(err.response?.data?.error || "Could not save changes.");
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -138,6 +221,21 @@ export default function CostCodesPage() {
             required
             sx={{ minWidth: 240 }}
           />
+          <TextField
+            label="Task Type"
+            placeholder="Electrical, Sitework..."
+            value={form.taskType}
+            onChange={(e) => setForm({ ...form, taskType: e.target.value })}
+            sx={{ minWidth: 160 }}
+          />
+          <TextField
+            label="Budget Hours"
+            type="number"
+            value={form.budgetHours}
+            onChange={(e) => setForm({ ...form, budgetHours: e.target.value })}
+            sx={{ width: 140 }}
+            inputProps={{ step: "0.1", min: 0 }}
+          />
           <FormControlLabel
             control={
               <Checkbox
@@ -152,6 +250,16 @@ export default function CostCodesPage() {
               label="Unit type"
               value={form.unitType}
               onChange={(e) => setForm({ ...form, unitType: e.target.value })}
+            />
+          )}
+          {form.allowsUnits && (
+            <TextField
+              label="Budget Units"
+              type="number"
+              value={form.budgetUnits}
+              onChange={(e) => setForm({ ...form, budgetUnits: e.target.value })}
+              sx={{ width: 140 }}
+              inputProps={{ step: "1", min: 0 }}
             />
           )}
           {isAdmin && (
@@ -197,18 +305,26 @@ export default function CostCodesPage() {
         endpoint="/cost-codes/import"
         templateEndpoint="/cost-codes/import/template"
         templateFilename="cost-codes-import-template.xlsx"
-        columnsHint="code, description, allowsUnits (true/false), unitType — optional"
+        columnsHint="code, description, taskType, allowsUnits (true/false), unitType, budgetHours, budgetUnits, status (active/inactive) — all but code/description are optional"
         onImported={load}
       />
 
-      <Paper>
+      <Paper sx={{ overflowX: "auto" }}>
         <Table>
           <TableHead>
             <TableRow>
               <TableCell>Code</TableCell>
               <TableCell>Description</TableCell>
+              <TableCell>Task Type</TableCell>
               <TableCell>Units</TableCell>
+              <TableCell align="right">Budget Hrs</TableCell>
+              <TableCell align="right">Incurred Hrs</TableCell>
+              <TableCell align="right">Remaining Hrs</TableCell>
+              <TableCell align="right">Budget Units</TableCell>
+              <TableCell align="right">Incurred Units</TableCell>
+              <TableCell align="right">Remaining Units</TableCell>
               <TableCell>Status</TableCell>
+              <TableCell />
             </TableRow>
           </TableHead>
           <TableBody>
@@ -216,7 +332,14 @@ export default function CostCodesPage() {
               <TableRow key={c.id}>
                 <TableCell>{c.code}</TableCell>
                 <TableCell>{c.description}</TableCell>
+                <TableCell>{c.taskType ?? "—"}</TableCell>
                 <TableCell>{c.allowsUnits ? c.unitType || "yes" : "—"}</TableCell>
+                <TableCell align="right">{fmtNum(c.budgetHours)}</TableCell>
+                <TableCell align="right">{fmtNum(c.incurredHours)}</TableCell>
+                <TableCell align="right">{fmtNum(c.remainingHours)}</TableCell>
+                <TableCell align="right">{c.allowsUnits ? fmtNum(c.budgetUnits) : "—"}</TableCell>
+                <TableCell align="right">{c.allowsUnits ? fmtNum(c.incurredUnits) : "—"}</TableCell>
+                <TableCell align="right">{c.allowsUnits ? fmtNum(c.remainingUnits) : "—"}</TableCell>
                 <TableCell>
                   <Chip
                     size="small"
@@ -226,11 +349,83 @@ export default function CostCodesPage() {
                     sx={canManage ? { cursor: "pointer" } : undefined}
                   />
                 </TableCell>
+                <TableCell align="right">
+                  {canManage && (
+                    <Button size="small" onClick={() => openEdit(c)}>
+                      Edit
+                    </Button>
+                  )}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </Paper>
+
+      <Dialog open={editing !== null} onClose={closeEdit} maxWidth="xs" fullWidth>
+        <DialogTitle>Edit Cost Code — {editing?.code}</DialogTitle>
+        <DialogContent>
+          {editError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {editError}
+            </Alert>
+          )}
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField
+              label="Description"
+              value={editForm.description}
+              onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+              required
+            />
+            <TextField
+              label="Task Type"
+              placeholder="Electrical, Sitework..."
+              value={editForm.taskType}
+              onChange={(e) => setEditForm({ ...editForm, taskType: e.target.value })}
+            />
+            <TextField
+              label="Budget Hours"
+              type="number"
+              value={editForm.budgetHours}
+              onChange={(e) => setEditForm({ ...editForm, budgetHours: e.target.value })}
+              inputProps={{ step: "0.1", min: 0 }}
+              helperText="Leave blank if this code's hours aren't budgeted"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={editForm.allowsUnits}
+                  onChange={(e) => setEditForm({ ...editForm, allowsUnits: e.target.checked })}
+                />
+              }
+              label="Allows units"
+            />
+            {editForm.allowsUnits && (
+              <TextField
+                label="Unit type"
+                value={editForm.unitType}
+                onChange={(e) => setEditForm({ ...editForm, unitType: e.target.value })}
+              />
+            )}
+            {editForm.allowsUnits && (
+              <TextField
+                label="Budget Units"
+                type="number"
+                value={editForm.budgetUnits}
+                onChange={(e) => setEditForm({ ...editForm, budgetUnits: e.target.value })}
+                inputProps={{ step: "1", min: 0 }}
+                helperText="Leave blank if this code's units aren't budgeted"
+              />
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeEdit}>Cancel</Button>
+          <Button variant="contained" onClick={saveEdit} disabled={editSaving}>
+            {editSaving ? "Saving..." : "Save"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

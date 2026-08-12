@@ -20,11 +20,28 @@ export const ATTENDANCE_STATUSES = [
   "excused",
   "unexcused",
   "vacation",
+  "unpaid",
   "turnaround",
   "bereavement",
   "other",
 ] as const;
 export type AttendanceStatus = (typeof ATTENDANCE_STATUSES)[number];
+
+export const TIME_OFF_TYPES = ["vacation", "unpaid", "turnaround", "other"] as const;
+export type TimeOffType = (typeof TIME_OFF_TYPES)[number];
+
+// pending_foreman -> pending_supervisor -> approved (or -> pending_manager ->
+// approved for a turnaround request that runs longer than the base 4-day
+// entitlement — see backend/plugins/time-off-requests/service.ts), or denied
+// at any pending stage.
+export const TIME_OFF_STATUSES = [
+  "pending_foreman",
+  "pending_supervisor",
+  "pending_manager",
+  "approved",
+  "denied",
+] as const;
+export type TimeOffStatus = (typeof TIME_OFF_STATUSES)[number];
 
 export const FRAUD_RESOLUTION_REASONS = [
   "approved",
@@ -35,6 +52,9 @@ export const FRAUD_RESOLUTION_REASONS = [
   "other",
 ] as const;
 export type FraudResolutionReason = (typeof FRAUD_RESOLUTION_REASONS)[number];
+
+export const EMPLOYMENT_TYPES = ["full_time", "contract"] as const;
+export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number];
 
 // ---------------------------------------------------------------------------
 // companies — purely organizational, one level above projects. Admin-only:
@@ -102,9 +122,21 @@ export const users = pgTable("users", {
   // Company-issued employee ID — free text, no uniqueness enforced (different
   // companies use different schemes). Purely a reference/lookup field.
   eid: varchar("eid", { length: 64 }),
+  // Full-time company staff vs a contract worker brought on through an
+  // outside firm. contractCompany is free text (that outside firm's name),
+  // not a link to the companies table above — that table is a different
+  // concept (who owns a project), not who employs this specific person.
+  employmentType: varchar("employment_type", { length: 16 }).notNull().default("full_time").$type<EmploymentType>(),
+  contractCompany: varchar("contract_company", { length: 120 }),
   // Reference rate (cents) for automatic per diem calculation — see
   // backend/plugins/per-diem/service.ts. Null means not eligible for per diem.
   perDiemRateCents: integer("per_diem_rate_cents"),
+  // Available paid-time-off balance, in minutes (same "minutes is the source
+  // of truth" convention as dailyEntries/costCodes budgets). Purely a
+  // reference figure shown to a foreman/supervisor reviewing a vacation-type
+  // time off request — see backend/plugins/time-off-requests — nothing
+  // deducts from it automatically. Null means not tracked for this person.
+  ptoBalanceMinutes: integer("pto_balance_minutes"),
   // Individually waives the team shift-start rules (early-grace + floor —
   // see backend/lib/timeclock.ts) regardless of role. Every role above plain
   // "employee" is exempt automatically; this covers specific rank-and-file
@@ -157,6 +189,14 @@ export const costCodes = pgTable("cost_codes", {
   unitType: varchar("unit_type", { length: 50 }),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  // Free-text category (e.g. "Electrical", "Sitework") — display/grouping only.
+  taskType: varchar("task_type", { length: 64 }),
+  // Planned target for this code. Minutes is the source of truth (matches
+  // dailyEntries), the API converts to/from hours at the edge. Null = no
+  // budget tracked for this code. Incurred/remaining are never stored here —
+  // they're computed at read time from dailyEntries so they can't drift.
+  budgetMinutes: integer("budget_minutes"),
+  budgetUnits: integer("budget_units"),
 }, (table) => ({
   // Composite: the same code string may be reused across different projects.
   codeIdx: uniqueIndex("cost_codes_project_code_idx").on(table.projectId, table.code),
@@ -367,6 +407,70 @@ export const fraudFlags = pgTable("fraud_flags", {
 });
 
 // ---------------------------------------------------------------------------
+// pay inquiries (an employee's question/dispute about their pay, routed to
+// their team's leadership — foreman/supervisor — plus their project's
+// manager/admin oversight)
+// ---------------------------------------------------------------------------
+export const payInquiries = pgTable("pay_inquiries", {
+  id: serial("id").primaryKey(),
+  employeeId: integer("employee_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  // Snapshotted at creation (same rationale as fraudFlags above) so an
+  // inquiry stays routed to wherever the employee actually was even if
+  // they're reassigned before it's resolved.
+  projectId: integer("project_id").references((): any => projects.id, { onDelete: "set null" }),
+  teamId: integer("team_id").references((): any => teams.id, { onDelete: "set null" }),
+  subject: varchar("subject", { length: 120 }).notNull(),
+  message: text("message").notNull(),
+  resolved: boolean("resolved").notNull().default(false),
+  response: text("response"),
+  resolvedBy: integer("resolved_by").references(() => users.id),
+  resolvedAt: timestamp("resolved_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// ---------------------------------------------------------------------------
+// time off requests — from/to date, a daily-hours rate, and a type, walked
+// through a signature approval (team foreman, then the project's supervisor,
+// then — for a turnaround request longer than the base 4-day entitlement —
+// a manager) before being ready for payroll's PDF export.
+// ---------------------------------------------------------------------------
+export const timeOffRequests = pgTable("time_off_requests", {
+  id: serial("id").primaryKey(),
+  employeeId: integer("employee_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  // Snapshotted at creation (same rationale as fraudFlags/payInquiries above).
+  projectId: integer("project_id").references((): any => projects.id, { onDelete: "set null" }),
+  teamId: integer("team_id").references((): any => teams.id, { onDelete: "set null" }),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  // Minutes is the source of truth (same convention as dailyEntries/costCodes
+  // budgets); the API converts to/from hours at the edge. Capped at 8h/day.
+  minutesPerDay: integer("minutes_per_day").notNull(),
+  type: varchar("type", { length: 16 }).notNull().$type<TimeOffType>(),
+  notes: text("notes"),
+  status: varchar("status", { length: 20 }).notNull().default("pending_foreman").$type<TimeOffStatus>(),
+  foremanApprovedBy: integer("foreman_approved_by").references(() => users.id),
+  foremanApprovedAt: timestamp("foreman_approved_at"),
+  foremanSignature: text("foreman_signature"),
+  supervisorApprovedBy: integer("supervisor_approved_by").references(() => users.id),
+  supervisorApprovedAt: timestamp("supervisor_approved_at"),
+  supervisorSignature: text("supervisor_signature"),
+  // Only ever set for a turnaround request whose range exceeds the base
+  // 4-day entitlement — see requiresManagerApproval() in
+  // backend/plugins/time-off-requests/service.ts.
+  managerApprovedBy: integer("manager_approved_by").references(() => users.id),
+  managerApprovedAt: timestamp("manager_approved_at"),
+  managerSignature: text("manager_signature"),
+  deniedBy: integer("denied_by").references(() => users.id),
+  deniedAt: timestamp("denied_at"),
+  denialReason: text("denial_reason"),
+  // Set the first time the approved-request PDF is downloaded (see
+  // backend/plugins/time-off-requests/pdf.ts) — payroll's export is a pull,
+  // not a push, so this just records that a copy has gone out.
+  sentToPayrollAt: timestamp("sent_to_payroll_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// ---------------------------------------------------------------------------
 // exports
 // ---------------------------------------------------------------------------
 export const exportsTable = pgTable("exports", {
@@ -433,6 +537,18 @@ export const fraudFlagsRelations = relations(fraudFlags, ({ one }) => ({
 export const dailyEntriesRelations = relations(dailyEntries, ({ one }) => ({
   dailyTime: one(dailyTime, { fields: [dailyEntries.dailyTimeId], references: [dailyTime.id] }),
   costCode: one(costCodes, { fields: [dailyEntries.costCodeId], references: [costCodes.id] }),
+}));
+
+export const payInquiriesRelations = relations(payInquiries, ({ one }) => ({
+  employee: one(users, { fields: [payInquiries.employeeId], references: [users.id] }),
+  project: one(projects, { fields: [payInquiries.projectId], references: [projects.id] }),
+  team: one(teams, { fields: [payInquiries.teamId], references: [teams.id] }),
+}));
+
+export const timeOffRequestsRelations = relations(timeOffRequests, ({ one }) => ({
+  employee: one(users, { fields: [timeOffRequests.employeeId], references: [users.id] }),
+  project: one(projects, { fields: [timeOffRequests.projectId], references: [projects.id] }),
+  team: one(teams, { fields: [timeOffRequests.teamId], references: [teams.id] }),
 }));
 
 export const clockEventsRelations = relations(clockEvents, ({ one }) => ({

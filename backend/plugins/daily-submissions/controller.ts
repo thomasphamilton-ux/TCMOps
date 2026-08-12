@@ -18,6 +18,11 @@ export const dailySubmissionsController = {
     reply.send(await dailySubmissionsService.getStatus(Number(teamId), date, req.authUser!));
   },
 
+  teamDaily: async (req: FastifyRequest, reply: FastifyReply) => {
+    const { teamId, date } = req.query as { teamId: string; date: string };
+    reply.send(await dailySubmissionsService.getTeamDaily(Number(teamId), date, req.authUser!));
+  },
+
   submit: async (req: FastifyRequest, reply: FastifyReply) => {
     const { teamId, date } = req.body as { teamId: number; date: string };
     reply.code(201).send(await dailySubmissionsService.submit(teamId, date, req.authUser!));

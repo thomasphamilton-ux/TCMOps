@@ -1,7 +1,7 @@
 import { and, eq, ilike, or } from "drizzle-orm";
 import { db } from "../../db";
-import { users, teams, costCodes, projects, ROLES } from "../../db/schema";
-import type { Role } from "../../db/schema";
+import { users, teams, costCodes, projects, ROLES, EMPLOYMENT_TYPES } from "../../db/schema";
+import type { Role, EmploymentType } from "../../db/schema";
 import { hashPin } from "../../lib/auth";
 import type { AuthUser } from "../../lib/auth";
 import { parseExcelBase64, buildImportTemplate, buildExcelWorkbook } from "../../lib/excel";
@@ -11,14 +11,20 @@ import { HttpError } from "../../lib/http-error";
 // and sensitive biometric data) from anything sent to the client — callers
 // that need to know enrollment status get the boolean instead. Also surfaces
 // the per diem rate in dollars (the API's unit) instead of the stored cents.
-function omitPin<T extends { pinHash: string; facialTemplate: string | null; perDiemRateCents: number | null }>(
-  user: T
-) {
-  const { pinHash, facialTemplate, perDiemRateCents, ...safe } = user;
+function omitPin<
+  T extends {
+    pinHash: string;
+    facialTemplate: string | null;
+    perDiemRateCents: number | null;
+    ptoBalanceMinutes: number | null;
+  }
+>(user: T) {
+  const { pinHash, facialTemplate, perDiemRateCents, ptoBalanceMinutes, ...safe } = user;
   return {
     ...safe,
     facialEnrolled: facialTemplate !== null,
     perDiemRate: perDiemRateCents !== null ? perDiemRateCents / 100 : null,
+    ptoBalanceHours: ptoBalanceMinutes !== null ? ptoBalanceMinutes / 60 : null,
   };
 }
 
@@ -57,6 +63,10 @@ export const usersService = {
       perDiemRate?: number;
       defaultCostCodeId?: number;
       eid?: string;
+      language?: string;
+      employmentType?: EmploymentType;
+      contractCompany?: string;
+      ptoBalanceHours?: number;
     },
     authUser: AuthUser
   ) {
@@ -76,6 +86,13 @@ export const usersService = {
         perDiemRateCents: data.perDiemRate != null ? Math.round(data.perDiemRate * 100) : null,
         defaultCostCodeId: data.defaultCostCodeId ?? null,
         eid: data.eid || null,
+        language: data.language || null,
+        employmentType: data.employmentType ?? "full_time",
+        // A contract company only means something for a contract worker —
+        // dropped otherwise so switching someone back to full-time later
+        // doesn't leave a stale, misleading value sitting on the record.
+        contractCompany: data.employmentType === "contract" ? data.contractCompany || null : null,
+        ptoBalanceMinutes: data.ptoBalanceHours != null ? Math.round(data.ptoBalanceHours * 60) : null,
       })
       .returning();
     return omitPin(created);
@@ -97,15 +114,29 @@ export const usersService = {
       defaultCostCodeId: number | null;
       archived: boolean;
       eid: string | null;
+      employmentType: EmploymentType;
+      contractCompany: string | null;
+      ptoBalanceHours: number | null;
     }>,
     authUser: AuthUser
   ) {
-    const { pin, projectId, perDiemRate, archived, ...rest } = data;
+    const { pin, projectId, perDiemRate, archived, employmentType, contractCompany, ptoBalanceHours, ...rest } = data;
     const patch: Record<string, unknown> = { ...rest };
     if (pin) patch.pinHash = await hashPin(pin);
     // Only admin may move a user between projects — manager is confined to their own.
     if (authUser.role === "admin" && projectId !== undefined) patch.projectId = projectId;
     if (perDiemRate !== undefined) patch.perDiemRateCents = perDiemRate != null ? Math.round(perDiemRate * 100) : null;
+    if (ptoBalanceHours !== undefined) {
+      patch.ptoBalanceMinutes = ptoBalanceHours != null ? Math.round(ptoBalanceHours * 60) : null;
+    }
+    if (employmentType !== undefined) {
+      patch.employmentType = employmentType;
+      // Same rule as create() — a contract company is meaningless once
+      // they're not a contract worker, so don't let a stale value linger.
+      patch.contractCompany = employmentType === "contract" ? contractCompany || null : null;
+    } else if (contractCompany !== undefined) {
+      patch.contractCompany = contractCompany;
+    }
     if (archived !== undefined) {
       patch.archived = archived;
       if (archived) {
@@ -131,16 +162,24 @@ export const usersService = {
     return omitPin(updated);
   },
 
+  // True/yes/1 (any case) reads as true; everything else (including blank) as false.
+  parseBoolean(raw: unknown): boolean {
+    return ["true", "yes", "1"].includes(String(raw ?? "").trim().toLowerCase());
+  },
+
   async importExcel(base64: string, authUser: AuthUser) {
     const rows = await parseExcelBase64(base64);
     const created: string[] = [];
     const errors: string[] = [];
 
-    const allTeams =
+    const [allTeams, allCostCodes] = await Promise.all([
+      authUser.role === "admin" ? db.select().from(teams) : db.select().from(teams).where(eq(teams.projectId, authUser.projectId ?? -1)),
       authUser.role === "admin"
-        ? await db.select().from(teams)
-        : await db.select().from(teams).where(eq(teams.projectId, authUser.projectId ?? -1));
+        ? db.select().from(costCodes)
+        : db.select().from(costCodes).where(eq(costCodes.projectId, authUser.projectId ?? -1)),
+    ]);
     const teamByName = new Map(allTeams.map((t) => [t.name.trim().toLowerCase(), t]));
+    const costCodeByCode = new Map(allCostCodes.map((c) => [c.code.trim().toLowerCase(), c]));
 
     for (const row of rows) {
       const name = row.name ?? row.Name;
@@ -148,6 +187,8 @@ export const usersService = {
       const role = (row.role ?? row.Role ?? "employee") as Role;
       const pin = row.pin ?? row.Pin ?? "0000";
       const teamName = row.team ?? row.Team;
+      const costCodeStr = row.defaultCostCode ?? row.DefaultCostCode;
+      const employmentTypeRaw = String(row.employmentType ?? row.EmploymentType ?? "").trim().toLowerCase();
 
       if (!name || !phone) {
         errors.push(`Skipped row missing name/phone: ${JSON.stringify(row)}`);
@@ -166,9 +207,41 @@ export const usersService = {
         }
       }
 
+      let defaultCostCodeId: number | null = null;
+      if (costCodeStr) {
+        const match = costCodeByCode.get(String(costCodeStr).trim().toLowerCase());
+        if (match) defaultCostCodeId = match.id;
+        else errors.push(`${phone}: cost code "${costCodeStr}" not found — left unset.`);
+      }
+
+      const employmentTypeValid = (EMPLOYMENT_TYPES as readonly string[]).includes(employmentTypeRaw);
+      const employmentType: EmploymentType = employmentTypeValid ? (employmentTypeRaw as EmploymentType) : "full_time";
+      if (employmentTypeRaw && !employmentTypeValid) {
+        errors.push(`${phone}: employment type "${employmentTypeRaw}" not recognized — defaulted to full_time.`);
+      }
+      const contractCompanyRaw = row.contractCompany ?? row.ContractCompany;
+
+      const perDiemRateRaw = row.perDiemRate ?? row.PerDiemRate;
+      const perDiemRateCents = perDiemRateRaw && !Number.isNaN(Number(perDiemRateRaw)) ? Math.round(Number(perDiemRateRaw) * 100) : null;
+
       try {
         const pinHash = await hashPin(String(pin));
-        await db.insert(users).values({ name, phone, pinHash, role, teamId, projectId: rowProjectId });
+        await db.insert(users).values({
+          name,
+          phone,
+          pinHash,
+          role,
+          teamId,
+          projectId: rowProjectId,
+          classification: (row.classification ?? row.Classification) || null,
+          eid: (row.eid ?? row.EID) || null,
+          language: (row.language ?? row.Language) || null,
+          shiftExempt: this.parseBoolean(row.shiftExempt ?? row.ShiftExempt),
+          defaultCostCodeId,
+          perDiemRateCents,
+          employmentType,
+          contractCompany: employmentType === "contract" ? (contractCompanyRaw || null) : null,
+        });
         created.push(phone);
       } catch (err) {
         errors.push(`Failed to import ${phone}: ${(err as Error).message}`);
@@ -179,10 +252,12 @@ export const usersService = {
   },
 
   async buildImportTemplate(authUser: AuthUser) {
-    const allTeams =
+    const [allTeams, allCostCodes] = await Promise.all([
+      authUser.role === "admin" ? db.select().from(teams) : db.select().from(teams).where(eq(teams.projectId, authUser.projectId ?? -1)),
       authUser.role === "admin"
-        ? await db.select().from(teams)
-        : await db.select().from(teams).where(eq(teams.projectId, authUser.projectId ?? -1));
+        ? db.select().from(costCodes)
+        : db.select().from(costCodes).where(eq(costCodes.projectId, authUser.projectId ?? -1)),
+    ]);
 
     return buildImportTemplate(
       {
@@ -193,9 +268,31 @@ export const usersService = {
           { header: "pin", key: "pin", width: 10 },
           { header: "role", key: "role", width: 14 },
           { header: "team", key: "team", width: 20 },
+          { header: "classification", key: "classification", width: 18 },
+          { header: "eid", key: "eid", width: 14 },
+          { header: "defaultCostCode", key: "defaultCostCode", width: 18 },
+          { header: "perDiemRate", key: "perDiemRate", width: 14 },
+          { header: "language", key: "language", width: 10 },
+          { header: "shiftExempt", key: "shiftExempt", width: 12 },
+          { header: "employmentType", key: "employmentType", width: 16 },
+          { header: "contractCompany", key: "contractCompany", width: 24 },
         ],
         rows: [
-          { name: "Jane Doe", phone: "5555551234", pin: "1234", role: "employee", team: allTeams[0]?.name ?? "" },
+          {
+            name: "Jane Doe",
+            phone: "5555551234",
+            pin: "1234",
+            role: "employee",
+            team: allTeams[0]?.name ?? "",
+            classification: "Journeyman",
+            eid: "",
+            defaultCostCode: allCostCodes[0]?.code ?? "",
+            perDiemRate: "",
+            language: "en",
+            shiftExempt: "false",
+            employmentType: "full_time",
+            contractCompany: "",
+          },
         ],
       },
       {
@@ -203,11 +300,18 @@ export const usersService = {
         columns: [
           { header: "valid roles", key: "role", width: 16 },
           { header: "current teams", key: "team", width: 20 },
+          { header: "current cost codes", key: "costCode", width: 20 },
+          { header: "valid employment types", key: "employmentType", width: 20 },
         ],
-        rows: Array.from({ length: Math.max(ROLES.length, allTeams.length) }, (_, i) => ({
-          role: ROLES[i] ?? "",
-          team: allTeams[i]?.name ?? "",
-        })),
+        rows: Array.from(
+          { length: Math.max(ROLES.length, allTeams.length, allCostCodes.length, EMPLOYMENT_TYPES.length) },
+          (_, i) => ({
+            role: ROLES[i] ?? "",
+            team: allTeams[i]?.name ?? "",
+            costCode: allCostCodes[i]?.code ?? "",
+            employmentType: EMPLOYMENT_TYPES[i] ?? "",
+          })
+        ),
       }
     );
   },
@@ -245,6 +349,8 @@ export const usersService = {
         { header: "Per Diem Rate", key: "perDiemRate", width: 14 },
         { header: "Language", key: "language", width: 10 },
         { header: "Shift Exempt", key: "shiftExempt", width: 12 },
+        { header: "Employment Type", key: "employmentType", width: 16 },
+        { header: "Contract Company", key: "contractCompany", width: 24 },
         { header: "Status", key: "status", width: 10 },
         { header: "Archived", key: "archived", width: 10 },
         { header: "Created", key: "createdAt", width: 14 },
@@ -262,6 +368,8 @@ export const usersService = {
         perDiemRate: u.perDiemRateCents != null ? u.perDiemRateCents / 100 : "",
         language: u.language ?? "",
         shiftExempt: u.shiftExempt ? "Yes" : "No",
+        employmentType: u.employmentType === "contract" ? "Contract" : "Full Time",
+        contractCompany: u.contractCompany ?? "",
         status: u.active ? "Active" : "Inactive",
         archived: u.archived ? "Yes" : "No",
         createdAt: u.createdAt.toISOString().slice(0, 10),

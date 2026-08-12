@@ -42,6 +42,9 @@ interface UserDetail {
   classification: string | null;
   perDiemRate: number | null;
   eid: string | null;
+  employmentType: string;
+  contractCompany: string | null;
+  ptoBalanceHours: number | null;
 }
 
 interface Team {
@@ -130,7 +133,7 @@ interface EditLogRow {
   editor: { name: string } | null;
 }
 
-const ATTENDANCE_STATUSES = ["excused", "unexcused", "vacation", "turnaround", "bereavement", "other"] as const;
+const ATTENDANCE_STATUSES = ["excused", "unexcused", "vacation", "unpaid", "turnaround", "bereavement", "other"] as const;
 type AttendanceStatus = (typeof ATTENDANCE_STATUSES)[number];
 
 interface AttendanceRow {
@@ -423,8 +426,18 @@ export default function EmployeeDetailPage() {
         <Chip label={team ? team.name : "No team"} variant="outlined" />
         {employee.eid && <Chip label={`EID: ${employee.eid}`} variant="outlined" />}
         {employee.classification && <Chip label={employee.classification} variant="outlined" />}
+        {employee.employmentType === "contract" && (
+          <Chip
+            label={employee.contractCompany ? `Contract: ${employee.contractCompany}` : "Contract"}
+            color="secondary"
+            variant="outlined"
+          />
+        )}
         {employee.perDiemRate != null && (
           <Chip label={`Per Diem: $${employee.perDiemRate.toFixed(2)}/day`} variant="outlined" />
+        )}
+        {employee.ptoBalanceHours != null && (
+          <Chip label={`PTO: ${employee.ptoBalanceHours.toFixed(1)} hrs`} variant="outlined" />
         )}
         <Chip label={employee.active ? "Active" : "Inactive"} color={employee.active ? "success" : "default"} />
         {employee.archived && <Chip label="Archived" color="warning" variant="outlined" />}

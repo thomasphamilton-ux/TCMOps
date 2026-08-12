@@ -27,12 +27,15 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: "/clock", label: "Clock" },
       { to: "/weekly", label: "Weekly" },
+      { to: "/pay-inquiries", label: "Pay Inquiries" },
+      { to: "/time-off", label: "Time Off" },
     ],
   },
   {
     label: "Team",
     items: [
       { to: "/daily", label: "Daily", roles: ["admin", "manager", "supervisor", "foreman"] },
+      { to: "/team-coding", label: "Team Coding", roles: ["admin", "manager", "supervisor", "foreman"] },
       { to: "/dashboard", label: "Dashboard", roles: ["admin", "manager", "supervisor", "foreman"] },
       { to: "/reports", label: "Exports", roles: ["admin", "manager", "supervisor", "foreman"] },
       { to: "/map", label: "Map", roles: ["admin", "manager", "supervisor", "foreman"] },

@@ -58,6 +58,22 @@ interface PendingSubmission {
   submittedAt: string;
 }
 
+interface PayInquiry {
+  id: number;
+  employeeId: number;
+  subject: string;
+  createdAt: string;
+}
+
+interface TimeOffRequest {
+  id: number;
+  employeeId: number;
+  startDate: string;
+  endDate: string;
+  type: string;
+  status: "pending_foreman" | "pending_supervisor" | "pending_manager" | "approved" | "denied";
+}
+
 interface DetailRow {
   team: string;
   employeeId: number;
@@ -144,6 +160,11 @@ export default function DashboardPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const canResolve = user?.role === "admin" || user?.role === "manager" || user?.role === "supervisor";
+  // Pay inquiries also route to a team's foreman (see backend/plugins/pay-inquiries),
+  // so this gate is one role wider than canResolve above.
+  const canSeePayInquiries = canResolve || user?.role === "foreman";
+  // Time off requests' first stage also goes to the team foreman.
+  const canSeeTimeOff = canResolve || user?.role === "foreman";
   const [mode, setMode] = useState<"daily" | "weekly">("daily");
   const [selectedDate, setSelectedDate] = useState(toDateStr(new Date()));
   const [selectedWeek, setSelectedWeek] = useState(toDateStr(mondayOf(new Date())));
@@ -179,6 +200,8 @@ export default function DashboardPage() {
   const [detail, setDetail] = useState<DetailRow[]>([]);
   const [lunchExceptions, setLunchExceptions] = useState<LunchException[]>([]);
   const [pendingSubmissions, setPendingSubmissions] = useState<PendingSubmission[]>([]);
+  const [pendingPayInquiries, setPendingPayInquiries] = useState<PayInquiry[]>([]);
+  const [pendingTimeOff, setPendingTimeOff] = useState<TimeOffRequest[]>([]);
   const [expandedTeam, setExpandedTeam] = useState<string | null>(null);
   const [expandedCostCode, setExpandedCostCode] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -213,17 +236,25 @@ export default function DashboardPage() {
       api.get("/reports/detail", { params: { start: range.start, end: range.end, ...projectParam } }),
       canResolve ? api.get("/lunch-exceptions", { params: projectParam }) : empty,
       canResolve ? api.get("/submissions", { params: projectParam }) : empty,
+      canSeePayInquiries ? api.get("/pay-inquiries", { params: { resolved: "false", ...projectParam } }) : empty,
+      canSeeTimeOff ? api.get("/time-off-requests", { params: projectParam }) : empty,
     ])
-      .then(([totalsRes, fraudRes, detailRes, lunchRes, submissionsRes]) => {
+      .then(([totalsRes, fraudRes, detailRes, lunchRes, submissionsRes, payInquiriesRes, timeOffRes]) => {
         setTeamTotals(totalsRes.data);
         setFlags(fraudRes.data);
         setDetail(detailRes.data);
         setLunchExceptions(lunchRes.data);
         setPendingSubmissions(submissionsRes.data);
+        setPendingPayInquiries(payInquiriesRes.data);
+        setPendingTimeOff(
+          (timeOffRes.data as TimeOffRequest[]).filter(
+            (r) => r.status === "pending_foreman" || r.status === "pending_supervisor" || r.status === "pending_manager"
+          )
+        );
       })
       .catch(() => setError("Could not load dashboard data."));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, range.start, range.end, selectedProjectId, canResolve]);
+  }, [mode, range.start, range.end, selectedProjectId, canResolve, canSeePayInquiries, canSeeTimeOff]);
 
   const approveLunchException = async (id: number) => {
     try {
@@ -736,6 +767,94 @@ export default function DashboardPage() {
               </Box>
             ))}
           </Paper>
+
+          {canSeePayInquiries && (
+            <>
+              <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>
+                Pending Pay Inquiries
+              </Typography>
+              <Paper>
+                {pendingPayInquiries.length === 0 && (
+                  <Typography color="text.secondary" sx={{ p: 2 }}>
+                    No open pay inquiries.
+                  </Typography>
+                )}
+                {pendingPayInquiries.map((p) => (
+                  <Box
+                    key={p.id}
+                    onClick={() => navigate("/pay-inquiries")}
+                    sx={{
+                      ...clickableRowSx,
+                      p: 1.5,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 1,
+                      borderBottom: "1px solid",
+                      borderColor: "divider",
+                      "&:last-of-type": { borderBottom: "none" },
+                    }}
+                  >
+                    <Typography variant="body2" sx={{ flexGrow: 1 }}>
+                      {employeeNameById.get(p.employeeId) ?? `Employee #${p.employeeId}`} — {p.subject}
+                    </Typography>
+                    <Button size="small" onClick={() => navigate("/pay-inquiries")}>
+                      Respond
+                    </Button>
+                  </Box>
+                ))}
+              </Paper>
+            </>
+          )}
+
+          {canSeeTimeOff && (
+            <>
+              <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>
+                Pending Time Off Approvals
+              </Typography>
+              <Paper>
+                {pendingTimeOff.length === 0 && (
+                  <Typography color="text.secondary" sx={{ p: 2 }}>
+                    No pending time off requests.
+                  </Typography>
+                )}
+                {pendingTimeOff.map((r) => (
+                  <Box
+                    key={r.id}
+                    onClick={() => navigate("/time-off")}
+                    sx={{
+                      ...clickableRowSx,
+                      p: 1.5,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 1,
+                      borderBottom: "1px solid",
+                      borderColor: "divider",
+                      "&:last-of-type": { borderBottom: "none" },
+                    }}
+                  >
+                    <Chip
+                      size="small"
+                      label={
+                        r.status === "pending_foreman"
+                          ? "Foreman"
+                          : r.status === "pending_supervisor"
+                            ? "Supervisor"
+                            : "Manager"
+                      }
+                      color={r.status === "pending_foreman" ? "warning" : "info"}
+                    />
+                    <Typography variant="body2" sx={{ flexGrow: 1 }}>
+                      {employeeNameById.get(r.employeeId) ?? `Employee #${r.employeeId}`} — {r.type} ({r.startDate} →{" "}
+                      {r.endDate})
+                    </Typography>
+                    <Button size="small" onClick={() => navigate("/time-off")}>
+                      Review
+                    </Button>
+                  </Box>
+                ))}
+              </Paper>
+            </>
+          )}
         </Grid>
       </Grid>
 

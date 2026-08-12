@@ -20,6 +20,8 @@ import fraudPlugin from "./plugins/fraud";
 import reportsPlugin from "./plugins/reports";
 import exportsPlugin from "./plugins/exports";
 import dailySubmissionsPlugin from "./plugins/daily-submissions";
+import payInquiriesPlugin from "./plugins/pay-inquiries";
+import timeOffRequestsPlugin from "./plugins/time-off-requests";
 
 const uploadsDir = path.join(__dirname, "uploads");
 fs.mkdirSync(path.join(uploadsDir, "exports"), { recursive: true });
@@ -62,6 +64,8 @@ async function main() {
   await fastify.register(reportsPlugin);
   await fastify.register(exportsPlugin);
   await fastify.register(dailySubmissionsPlugin);
+  await fastify.register(payInquiriesPlugin);
+  await fastify.register(timeOffRequestsPlugin);
 
   fastify.setNotFoundHandler((req, reply) => {
     reply.code(404).send({ error: `Route ${req.method} ${req.url} not found` });

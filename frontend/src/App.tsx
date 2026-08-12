@@ -11,7 +11,10 @@ import LoginPage from "./pages/Login";
 import RegisterPage from "./pages/Register";
 import ClockPage from "./pages/Clock";
 import DailyPage from "./pages/Daily";
+import TeamCodingPage from "./pages/TeamCoding";
 import WeeklyPage from "./pages/Weekly";
+import PayInquiriesPage from "./pages/PayInquiries";
+import TimeOffRequestsPage from "./pages/TimeOffRequests";
 import DashboardPage from "./pages/Dashboard";
 import UsersPage from "./pages/Users";
 import EmployeeDetailPage from "./pages/EmployeeDetail";
@@ -54,11 +57,41 @@ function AppRoutes() {
         }
       />
       <Route
+        path="/team-coding"
+        element={
+          <ProtectedRoute roles={[...MANAGEMENT_ROLES]}>
+            <Layout>
+              <TeamCodingPage />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/weekly"
         element={
           <ProtectedRoute>
             <Layout>
               <WeeklyPage />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/pay-inquiries"
+        element={
+          <ProtectedRoute>
+            <Layout>
+              <PayInquiriesPage />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/time-off"
+        element={
+          <ProtectedRoute>
+            <Layout>
+              <TimeOffRequestsPage />
             </Layout>
           </ProtectedRoute>
         }

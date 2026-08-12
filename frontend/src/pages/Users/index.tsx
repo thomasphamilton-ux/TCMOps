@@ -41,6 +41,9 @@ interface User {
   defaultCostCodeId: number | null;
   archived: boolean;
   eid: string | null;
+  employmentType: string;
+  contractCompany: string | null;
+  ptoBalanceHours: number | null;
 }
 
 interface Team {
@@ -96,6 +99,9 @@ export default function UsersPage() {
     perDiemRate: "",
     defaultCostCodeId: "",
     eid: "",
+    employmentType: "full_time",
+    contractCompany: "",
+    ptoBalanceHours: "",
   });
   const [submitting, setSubmitting] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -162,6 +168,8 @@ export default function UsersPage() {
         projectId: isAdmin && form.projectId ? Number(form.projectId) : undefined,
         perDiemRate: form.perDiemRate ? Number(form.perDiemRate) : undefined,
         defaultCostCodeId: form.defaultCostCodeId ? Number(form.defaultCostCodeId) : undefined,
+        contractCompany: form.employmentType === "contract" ? form.contractCompany || undefined : undefined,
+        ptoBalanceHours: form.ptoBalanceHours ? Number(form.ptoBalanceHours) : undefined,
       });
       setForm({
         name: "",
@@ -176,6 +184,9 @@ export default function UsersPage() {
         perDiemRate: "",
         defaultCostCodeId: "",
         eid: "",
+        employmentType: "full_time",
+        contractCompany: "",
+        ptoBalanceHours: "",
       });
       await load();
     } catch (err: any) {
@@ -249,6 +260,9 @@ export default function UsersPage() {
     language: "",
     defaultCostCodeId: "",
     eid: "",
+    employmentType: "full_time",
+    contractCompany: "",
+    ptoBalanceHours: "",
   });
   const [editError, setEditError] = useState("");
   const [editSaving, setEditSaving] = useState(false);
@@ -269,6 +283,9 @@ export default function UsersPage() {
       language: u.language ?? "",
       defaultCostCodeId: u.defaultCostCodeId != null ? String(u.defaultCostCodeId) : "",
       eid: u.eid ?? "",
+      employmentType: u.employmentType,
+      contractCompany: u.contractCompany ?? "",
+      ptoBalanceHours: u.ptoBalanceHours != null ? String(u.ptoBalanceHours) : "",
     });
     setEditError("");
   };
@@ -303,6 +320,9 @@ export default function UsersPage() {
         language: editForm.language || null,
         defaultCostCodeId: editForm.defaultCostCodeId ? Number(editForm.defaultCostCodeId) : null,
         eid: editForm.eid || null,
+        employmentType: editForm.employmentType,
+        contractCompany: editForm.employmentType === "contract" ? editForm.contractCompany || null : null,
+        ptoBalanceHours: editForm.ptoBalanceHours ? Number(editForm.ptoBalanceHours) : null,
         ...(editForm.pin ? { pin: editForm.pin } : {}),
       });
       setEditing(null);
@@ -376,6 +396,33 @@ export default function UsersPage() {
             sx={{ width: 170 }}
             inputProps={{ step: "0.01", min: 0 }}
           />
+          <TextField
+            label="PTO Balance (hrs)"
+            type="number"
+            value={form.ptoBalanceHours}
+            onChange={(e) => setForm({ ...form, ptoBalanceHours: e.target.value })}
+            sx={{ width: 150 }}
+            inputProps={{ step: "0.1", min: 0 }}
+          />
+          <TextField
+            select
+            label="Employment Type"
+            value={form.employmentType}
+            onChange={(e) => setForm({ ...form, employmentType: e.target.value })}
+            sx={{ minWidth: 160 }}
+          >
+            <MenuItem value="full_time">Full Time</MenuItem>
+            <MenuItem value="contract">Contract</MenuItem>
+          </TextField>
+          {form.employmentType === "contract" && (
+            <TextField
+              label="Contract Company"
+              placeholder="Staffing/contracting firm"
+              value={form.contractCompany}
+              onChange={(e) => setForm({ ...form, contractCompany: e.target.value })}
+              sx={{ minWidth: 180 }}
+            />
+          )}
           <TextField
             select
             label="Default Cost Code"
@@ -472,7 +519,7 @@ export default function UsersPage() {
         endpoint="/users/import"
         templateEndpoint="/users/import/template"
         templateFilename="users-import-template.xlsx"
-        columnsHint='name, phone, pin, role (admin/manager/supervisor/foreman/employee), team (team name — optional, matched by name)'
+        columnsHint='name, phone, pin, role (admin/manager/supervisor/foreman/employee), team, classification, eid, default cost code (code — optional), per diem rate, language, shift exempt (yes/no), employment type (full_time/contract), contract company (only if contract)'
         onImported={load}
       />
 
@@ -605,6 +652,14 @@ export default function UsersPage() {
               helperText="Leave blank if this person isn't eligible for per diem"
             />
             <TextField
+              label="PTO Balance (hrs)"
+              type="number"
+              value={editForm.ptoBalanceHours}
+              onChange={(e) => setEditForm({ ...editForm, ptoBalanceHours: e.target.value })}
+              inputProps={{ step: "0.1", min: 0 }}
+              helperText="Shown to leadership reviewing this person's paid time off requests"
+            />
+            <TextField
               select
               label="Default Cost Code"
               value={editForm.defaultCostCodeId}
@@ -631,6 +686,23 @@ export default function UsersPage() {
                 </MenuItem>
               ))}
             </TextField>
+            <TextField
+              select
+              label="Employment Type"
+              value={editForm.employmentType}
+              onChange={(e) => setEditForm({ ...editForm, employmentType: e.target.value })}
+            >
+              <MenuItem value="full_time">Full Time</MenuItem>
+              <MenuItem value="contract">Contract</MenuItem>
+            </TextField>
+            {editForm.employmentType === "contract" && (
+              <TextField
+                label="Contract Company"
+                placeholder="Staffing/contracting firm"
+                value={editForm.contractCompany}
+                onChange={(e) => setEditForm({ ...editForm, contractCompany: e.target.value })}
+              />
+            )}
             <TextField
               select
               label="Role"

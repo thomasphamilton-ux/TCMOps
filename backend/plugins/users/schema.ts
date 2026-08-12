@@ -14,6 +14,10 @@ export const createUserSchema = {
       perDiemRate: { type: "number", minimum: 0 },
       defaultCostCodeId: { type: "number" },
       eid: { type: "string", maxLength: 64 },
+      language: { type: "string", maxLength: 10 },
+      employmentType: { type: "string", enum: ["full_time", "contract"] },
+      contractCompany: { type: "string", maxLength: 120 },
+      ptoBalanceHours: { type: "number", minimum: 0 },
     },
   },
 };
@@ -35,6 +39,9 @@ export const updateUserSchema = {
       defaultCostCodeId: { type: ["number", "null"] },
       archived: { type: "boolean" },
       eid: { type: ["string", "null"], maxLength: 64 },
+      employmentType: { type: "string", enum: ["full_time", "contract"] },
+      contractCompany: { type: ["string", "null"], maxLength: 120 },
+      ptoBalanceHours: { type: ["number", "null"], minimum: 0 },
     },
   },
 };
